@@ -1,5 +1,5 @@
 def main():
-    print("Hello from backendproject!")
+    print("Welcome to leave management system!")
 
 
 if __name__ == "__main__":
