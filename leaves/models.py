@@ -13,6 +13,12 @@ class Leave(models.Model):
         ('STUDY', 'Study Leave'),
         ('SPECIAL', 'Special Leave'),
     ]
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('APPROVED', 'Approved'),
+        ('REJECTED', 'Rejected'),
+        ('CANCELLED', 'Cancelled'),
+    ]
     """Model representing a leave request in the leave management system.
     Each leave request has a unique ID, name, type, start and end dates, reason for the leave, and an optional supporting document."""
     leave_type = models.CharField(max_length=50, choices=LEAVE_TYPE_CHOICES)
@@ -20,6 +26,7 @@ class Leave(models.Model):
     end_date = models.DateField()
     reason = models.TextField()
     supporting_document = models.FileField(upload_to='leave_documents/', blank=True, null=True)
+    status = models.CharField(max_length=20, default='PENDING', choices=STATUS_CHOICES)
 
     employee = models.ForeignKey(settings.AUTH_USER_MODEL, 
                                  on_delete=models.CASCADE, 

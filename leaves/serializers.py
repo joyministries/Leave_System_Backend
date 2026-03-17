@@ -9,9 +9,9 @@ class LeaveSerializer(serializers.ModelSerializer):
         # Ensure employee is set from the request context, not the client
         read_only_fields = ['employee']  
 
-    list_display = ('leave_type','start_date', 'end_date', 'reason')
-    search_fields = ('leave_type','reason')
-    list_filter = ('start_date', 'end_date', 'leave_type')
+    list_display = ('leave_type','start_date', 'end_date', 'reason', 'status')
+    search_fields = ('leave_type','reason', 'status')
+    list_filter = ('start_date', 'end_date', 'leave_type', 'status')
 
 
     def validate(self, data):
