@@ -32,11 +32,7 @@ DEBUG = config("DEBUG", default=True)
 SECRET_KEY = config("SECRET_KEY")
 
 # Configure allowed hosts - includes common development and deployment domains
-ALLOWED_HOSTS = config(
-    "ALLOWED_HOSTS",
-    default="localhost,127.0.0.1",
-    cast=lambda v: [s.strip() for s in v.split(",")],
-)
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost").split(",")
 
 
 # Application definition
@@ -79,7 +75,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://lms-frontend-nine-gules.vercel.app",  # Deployed frontend URL
 ]
 CORS_ALLOW_ALL_ORIGINS = False
-CSRF_TRUSTED_ORIGINS = ["https://lms-backend.onrender.com"]
+CSRF_TRUSTED_ORIGINS = os.environ.get("CSRF_TRUSTED_ORIGINS").split(",")
 
 TEMPLATES = [
     {
