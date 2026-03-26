@@ -32,7 +32,11 @@ DEBUG = config("DEBUG", default=True)
 SECRET_KEY = config("SECRET_KEY")
 
 # Configure allowed hosts - includes common development and deployment domains
-ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost").split(",")
+ALLOWED_HOSTS = [
+    'localhost',
+    '127.0.0.1',
+    'lms-backend-658v.onrender.com',
+]
 
 
 # Application definition
