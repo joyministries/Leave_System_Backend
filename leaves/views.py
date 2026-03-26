@@ -4,8 +4,10 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.exceptions import APIException
 from django.contrib.auth import authenticate
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from .models import Institution, Employee, LeaveType, Leave
 from .serializers import (
     InstitutionSerializer,
@@ -131,10 +133,19 @@ class PasswordResetRequestView(APIView):
         token = default_token_generator.make_token(employee)
 
         # Send password reset email
-        reset_link = f"{request.META.get('HTTP_ORIGIN', 'http://localhost:3000')}/reset-password/{uid}/{token}"
-        send_password_reset_email(employee, reset_link)
+        reset_link = f"{request.META.get('HTTP_ORIGIN', 'http://localhost:5173')}/reset-password/{uid}/{token}"
 
-        logger.info(f"Password reset email sent to {employee.email}")
+        try:
+            send_password_reset_email(employee, reset_link)
+            logger.info(f"Password reset email sent to {employee.email}")
+        except Exception as e:
+            logger.error(
+                f"Failed to send password reset email to {employee.email}: {e}"
+            )
+            # Surface a clear API-level error; no DB changes are made here
+            raise APIException(
+                "Failed to send password reset email. Please try again later."
+            )
 
         return Response(
             {
@@ -273,12 +284,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         if user.role in [Employee.Role.HR, Employee.Role.MANAGER]:
             # Show all employees from the same institution (across all departments)
             return Employee.objects.select_related("institution").filter(
-                institution=user.institution)
+                institution=user.institution
+            )
         elif user.role == Employee.Role.ADMIN:
             # Show all employees
             return Employee.objects.all()
         # Staff users can't list employees (permission denied by IsAdminOrHROfSameInstitutionAndDepartment)
-        
+
         return Employee.objects.select_related("institution").none()
 
     def get_serializer_class(self):
@@ -290,16 +302,32 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         return EmployeeSerializer
 
     def create(self, request, *args, **kwargs):
-        """Override create to send welcome email after employee creation."""
-        response = super().create(request, *args, **kwargs)
+        """Create an employee and attempt to send a welcome email.
 
-        if response.status_code == status.HTTP_201_CREATED:
-            # Get the created employee and send welcome email
-            employee = Employee.objects.get(id=response.data["id"])
+        The employee is always created if validation passes. If sending the
+        welcome email fails, the error is logged but does not prevent creation.
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # Ensure the creation itself is atomic, but treat email as a
+        # best-effort side effect.
+        with transaction.atomic():
+            employee = serializer.save()
+            logger.info(
+                f"Employee {employee.email} created successfully with ID {employee.id}."
+            )
+
+        try:
             send_welcome_email(employee)
             logger.info(f"Welcome email sent to new employee: {employee.email}")
+        except Exception as e:
+            logger.error(f"Failed to send welcome email to {employee.email}: {e}")
 
-        return response
+        headers = self.get_success_headers(serializer.data)
+        return Response(
+            serializer.data, status=status.HTTP_201_CREATED, headers=headers
+        )
 
     def destroy(self, request, *args, **kwargs):
         """Override destroy to perform a soft delete by setting is_active to False."""
@@ -341,11 +369,20 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 {"error": "Cannot send email to an inactive employee."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        send_welcome_email(employee)
-        logger.info(f"Resent welcome email to employee: {employee.email}.")
+        try:
+            send_welcome_email(employee)
+            logger.info(f"Resent welcome email to employee: {employee.email}.")
+        except Exception as e:
+            logger.error(
+                f"Failed to resend welcome email to employee {employee.email}: {e}"
+            )
+            raise APIException(
+                "Failed to resend welcome email. Please try again later."
+            )
 
         return Response(
-            {"message": "Welcome email resent successfully."}, status=status.HTTP_200_OK
+            {"message": "Welcome email resent successfully."},
+            status=status.HTTP_200_OK,
         )
 
 

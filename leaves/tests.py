@@ -3,6 +3,7 @@ from rest_framework.test import APITestCase, APIClient
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import date, timedelta
+from unittest.mock import patch
 import uuid
 
 from .models import Institution, Employee, LeaveType, Leave
@@ -337,3 +338,84 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
         self.assertGreater(len(response.data), 0)
+
+
+class EmployeeCreationEmailFlowTests(APITestCase):
+    """Tests for employee creation and welcome email transactional behavior."""
+
+    def setUp(self):
+        self.client = APIClient()
+
+        # Create an institution and an admin user who can create employees
+        self.institution = Institution.objects.create(
+            name="Test Institution", address="123 Test St"
+        )
+
+        self.admin_user = Employee.objects.create_user(
+            email="admin@test.com",
+            password="adminpass123",
+            first_name="Admin",
+            last_name="User",
+            department="HR",
+            position="Administrator",
+            institution=self.institution,
+            role=Employee.Role.ADMIN,
+        )
+
+    def get_token_for_user(self, user):
+        refresh = RefreshToken.for_user(user)
+        return str(refresh.access_token)
+
+    def test_employee_created_even_if_welcome_email_fails(self):
+        """If welcome email fails, the employee should still be persisted."""
+
+        token = self.get_token_for_user(self.admin_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        payload = {
+            "email": "new.employee@test.com",
+            "first_name": "New",
+            "last_name": "Employee",
+            "department": "Engineering",
+            "position": "Developer",
+            "role": Employee.Role.STAFF,
+            "institution": str(self.institution.id),
+            "phone_number": "1234567890",
+        }
+
+        with patch(
+            "leaves.views.send_welcome_email", side_effect=Exception("SMTP error")
+        ):
+            response = self.client.post("/api/employees/", payload, format="json")
+
+        # Creation should still succeed with 201
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Ensure the employee was created even though email failed
+        self.assertTrue(Employee.objects.filter(email="new.employee@test.com").exists())
+
+    def test_employee_creation_succeeds_when_welcome_email_succeeds(self):
+        """On successful email send, employee should be created normally."""
+
+        token = self.get_token_for_user(self.admin_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        payload = {
+            "email": "success.employee@test.com",
+            "first_name": "Success",
+            "last_name": "Employee",
+            "department": "Engineering",
+            "position": "Developer",
+            "role": Employee.Role.STAFF,
+            "institution": str(self.institution.id),
+            "phone_number": "1234567890",
+        }
+
+        with patch("leaves.views.send_welcome_email") as mock_send:
+            response = self.client.post("/api/employees/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            Employee.objects.filter(email="success.employee@test.com").exists()
+        )
+        mock_send.assert_called_once()

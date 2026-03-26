@@ -23,12 +23,12 @@ def calculate_working_days(start_date, end_date):
         current_date += datetime.timedelta(days=1)
     return working_days
 
-def generate_password_reset_link(employee):
-    """Generate a password reset link for the given user."""
+def generate_password_set_link(employee):
+    """Generate a password set link for the given user."""
     token = default_token_generator.make_token(employee)
     uid = urlsafe_base64_encode(force_bytes(employee.pk))
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
-    reset_link = f"{frontend_url}/reset-password/{uid}/{token}/"
+    frontend_url = getattr(settings, "FRONTEND_URL", "https://lms-frontend.vercel.app")
+    reset_link = f"{frontend_url}/set-password/{uid}/{token}/"
     return reset_link
 
 def send_welcome_email(employee):
@@ -40,7 +40,7 @@ def send_welcome_email(employee):
         \n\nWelcome to the Leave Management System! Your account has been created successfully.
         
         Please click the following link to set your password and access your account:
-        \n\n{generate_password_reset_link(employee)}\n\n
+        \n\n{generate_password_set_link(employee)}\n\n
 
         If you have any questions or need assistance, please contact your administrator.
 

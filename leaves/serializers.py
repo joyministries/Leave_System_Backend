@@ -113,44 +113,40 @@ class EmployeeUpdateSerializer(serializers.ModelSerializer):
 
 
 class SetPasswordSerializer(serializers.Serializer):
-    """Serializer for allowing users to set a new password after receiving a reset link."""
-
     uid = serializers.CharField()
     token = serializers.CharField()
-    new_password = serializers.CharField(min_length=8, write_only=True, required=True)
-    confirm_password = serializers.CharField(
-        min_length=8, write_only=True, required=True
-    )
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    confirm_password = serializers.CharField(min_length=8, write_only=True)
 
-    def validate_password(self, value):
-        if value["new_password"] != value["confirm_password"]:
-            raise serializers.ValidationError("Passwords do not match.")
-        if len(value["new_password"]) < 8:
+    def validate(self, data):
+        # 1. Check if passwords match
+        if data["new_password"] != data["confirm_password"]:
             raise serializers.ValidationError(
-                "Password must be at least 8 characters long."
+                {"confirm_password": "Passwords do not match."}
             )
 
+        # 2. Verify User & Token
         try:
-            uid = force_str(urlsafe_base64_decode(value["uid"]))
+            uid = force_str(urlsafe_base64_decode(data["uid"]))
             employee = Employee.objects.get(pk=uid)
-        except (Employee.DoesNotExist, ValueError, TypeError, OverflowError):
-            raise serializers.ValidationError({"uid": "Invalid user."})
+        except (Employee.DoesNotExist, ValueError, TypeError):
+            raise serializers.ValidationError({"uid": "Invalid or expired link."})
 
-        if not default_token_generator.check_token(employee, value["token"]):
+        if not default_token_generator.check_token(employee, data["token"]):
             raise serializers.ValidationError(
-                {"token": "Reset link is invalid or has expired."}
+                {"token": "Token is invalid or has expired."}
             )
 
-        value["employee"] = employee
-        return value
+        data["employee"] = employee
+        return data
 
     def save(self):
         employee = self.validated_data["employee"]
         employee.set_password(self.validated_data["new_password"])
+        employee.is_active = True  # Activate them now!
+        # Clear must_reset_password so subsequent logins behave normally
         employee.must_reset_password = False
         employee.save()
-        logger.info(f"User {employee.email} has reset their password.")
-
         return employee
 
 

@@ -15,6 +15,7 @@ from datetime import timedelta
 import os
 import dj_database_url
 from dotenv import load_dotenv
+from decouple import config
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -25,13 +26,17 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-(42nq&0&cj-gj1@c7721dl)02ym*q6vsb*1uh7-wlo&)dmba7o"
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = config("DEBUG", default=True)
 
-ALLOWED_HOSTS = []
+SECRET_KEY = config("SECRET_KEY")
+
+# Configure allowed hosts - includes common development and deployment domains
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS",
+    default="localhost,127.0.0.1",
+    cast=lambda v: [s.strip() for s in v.split(",")],
+)
 
 
 # Application definition
@@ -71,7 +76,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # React development server
     "http://localhost:5174",  # React development server
     "http://localhost:5175",  # React development server
-    "https://lms-frontend-nine-gules.vercel.app", # Deployed frontend URL
+    "https://lms-frontend-nine-gules.vercel.app",  # Deployed frontend URL
 ]
 CORS_ALLOW_ALL_ORIGINS = False
 
@@ -145,6 +150,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -177,7 +185,7 @@ DEFAULT_FROM_EMAIL = os.getenv("EMAIL_HOST_USER")
 
 AUTH_USER_MODEL = "leaves.Employee"
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 
 LOGGING = {
@@ -195,10 +203,12 @@ LOGGING = {
 }
 
 # Email configuration (console backend for development)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.getenv("EMAIL_HOST")
+EMAIL_BACKEND = os.getenv(
+    "EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = os.getenv("EMAIL_HOST_USER")
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
