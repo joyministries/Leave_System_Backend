@@ -310,7 +310,6 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.select_related("institution").all()
     permission_classes = [IsAuthenticated, IsAdminOrHROfSameInstitutionAndDepartment]
     filter_backends = [filters.SearchFilter]
-    lookup_field = "uuid"
     search_fields = [
         "email",
         "first_name",
@@ -327,6 +326,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         - Staff: See no employees (they don't have permission to list anyway)
         """
         user = self.request.user
+
+        if not user.is_authenticated:
+            return Employee.objects.none()
 
         if user.role in [Employee.Role.HR, Employee.Role.MANAGER]:
             # Show all employees from the same institution (across all departments)
@@ -512,15 +514,24 @@ class LeaveViewSet(viewsets.ModelViewSet):
         """
         user = self.request.user
 
+        if not user.is_authenticated:
+            return Leave.objects.none()
+
         if user.role in [Employee.Role.HR, Employee.Role.ADMIN, Employee.Role.MANAGER]:
             # Only show leaves from employees in the same institution and department as the admin/HR/manager
-            return Leave.objects.select_related("employee", "leave_type").filter(
-                employee__institution=user.institution,
-                employee__department=user.department,
+            return (
+                Leave.objects.select_related("employee", "leave_type")
+                .filter(
+                    employee__institution=user.institution,
+                    employee__department=user.department,
+                )
+                .order_by("-start_date", "-id")
             )
 
-        return Leave.objects.select_related("employee", "leave_type").filter(
-            employee=user
+        return (
+            Leave.objects.select_related("employee", "leave_type")
+            .filter(employee=user)
+            .order_by("-start_date", "-id")
         )
 
     def perform_create(self, serializer):
