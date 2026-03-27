@@ -156,6 +156,23 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
 
+class PostLoginPasswordSerializer(serializers.Serializer):
+    new_password = serializers.CharField(min_length=8, write_only=True)
+    confirm_password = serializers.CharField(min_length=8, write_only=True)
+
+    def validate(self, data):
+        if data["new_password"] != data["confirm_password"]:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+        return data
+
+    def save(self, employee):
+        employee.set_password(self.validated_data["new_password"])
+        employee.must_reset_password = False
+        employee.save()
+        return employee
+
 class LeaveTypeSerializer(serializers.ModelSerializer):
 
     class Meta:

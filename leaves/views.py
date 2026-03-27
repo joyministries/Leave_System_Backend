@@ -20,6 +20,7 @@ from .serializers import (
     LoginSerializer,
     LeaveStatusUpdateSerializer,
     SetPasswordSerializer,
+    PostLoginPasswordSerializer
 )
 from .utils import calculate_working_days, send_email, send_password_reset_email
 import logging
@@ -95,6 +96,33 @@ class SetPassword(APIView):
             status=status.HTTP_200_OK,
         )
 
+class PostLoginPasswordView(APIView):
+    """
+    Endpoint for employees to set a new password after logging in, if they are required to reset their password.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        if not getattr(request.user, "must_reset_password", False):
+            return Response(
+                {"message": "Password reset not required for this account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = PostLoginPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        employee = request.user
+        employee.set_password(serializer.validated_data["new_password"])
+        employee.must_reset_password = False  # Clear the flag after setting new password
+        employee.save()
+
+        logger.info(f"Employee {employee.email} has updated their password successfully post-login.")
+
+        return Response(
+            {"message": "Password has been updated successfully."},
+            status=status.HTTP_200_OK,
+        )
 
 class PasswordResetRequestView(APIView):
     """
