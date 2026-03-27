@@ -37,7 +37,7 @@ def generate_password_set_link(employee):
     return reset_link
 
 def send_email(employee, subject, html_body) -> bool:
-    """Send a email to the new employee."""
+    """Send an email to an employee."""
     try:
         msg = EmailMultiAlternatives(
             subject = subject,
@@ -52,6 +52,20 @@ def send_email(employee, subject, html_body) -> bool:
     except Exception as e:
         logger.error(f"Failed to send email to {employee.email}: {str(e)}")
         return False
+
+
+def send_welcome_email(employee) -> bool:
+    """Send the welcome email with the password setup link."""
+    set_link = generate_password_set_link(employee)
+    html_body = f"""
+        <p>Hi {employee.first_name},</p>
+        <p>Welcome to the Leave Management System.</p>
+        <p>Please click the link below to set your password:</p>
+        <p><a href=\"{set_link}\">Set your password</a></p>
+        <p>If you did not request this, please contact your administrator.</p>
+        <p>Best regards,<br>Team Impact University</p>
+    """
+    return send_email(employee, "Welcome to the Leave Management System", html_body)
 
 def send_otp_email(employee) -> bool:
     """Send an OTP email to the employee for password reset."""

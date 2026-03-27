@@ -20,9 +20,14 @@ from .serializers import (
     LoginSerializer,
     LeaveStatusUpdateSerializer,
     SetPasswordSerializer,
-    PostLoginPasswordSerializer
+    PostLoginPasswordSerializer,
 )
-from .utils import calculate_working_days, send_email, send_password_reset_email
+from .utils import (
+    calculate_working_days,
+    send_email,
+    send_password_reset_email,
+    send_welcome_email,
+)
 import logging
 from .permissions import (
     IsAdminRole,
@@ -96,6 +101,7 @@ class SetPassword(APIView):
             status=status.HTTP_200_OK,
         )
 
+
 class PostLoginPasswordView(APIView):
     """
     Endpoint for employees to set a new password after logging in, if they are required to reset their password.
@@ -114,15 +120,20 @@ class PostLoginPasswordView(APIView):
 
         employee = request.user
         employee.set_password(serializer.validated_data["new_password"])
-        employee.must_reset_password = False  # Clear the flag after setting new password
+        employee.must_reset_password = (
+            False  # Clear the flag after setting new password
+        )
         employee.save()
 
-        logger.info(f"Employee {employee.email} has updated their password successfully post-login.")
+        logger.info(
+            f"Employee {employee.email} has updated their password successfully post-login."
+        )
 
         return Response(
             {"message": "Password has been updated successfully."},
             status=status.HTTP_200_OK,
         )
+
 
 class PasswordResetRequestView(APIView):
     """
@@ -143,7 +154,7 @@ class PasswordResetRequestView(APIView):
         try:
             employee = Employee.objects.get(email=email)
             if not employee.is_active:
-                raise Employee.DoesNotExist 
+                raise Employee.DoesNotExist
         except Employee.DoesNotExist:
             # Don't reveal if email exists or not (security best practice)
             return Response(
@@ -163,9 +174,14 @@ class PasswordResetRequestView(APIView):
         try:
             # Generate reset token
             from leaves.utils import generate_password_set_link, send_email
+
             # Send password reset email
             set_link = generate_password_set_link(employee)
-            send_email(employee.email, "Password Reset Request", f"Please click the following link to set your password: {set_link}")
+            send_email(
+                employee.email,
+                "Password Reset Request",
+                f"Please click the following link to set your password: {set_link}",
+            )
 
             logger.info(f"Password reset email sent to {employee.email}")
         except Exception as e:
@@ -294,7 +310,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.select_related("institution").all()
     permission_classes = [IsAuthenticated, IsAdminOrHROfSameInstitutionAndDepartment]
     filter_backends = [filters.SearchFilter]
-    lookup_field = 'uuid'
+    lookup_field = "uuid"
     search_fields = [
         "email",
         "first_name",
@@ -351,16 +367,17 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
         try:
             logger.info("Attempting to send welcome email...")
-            send_email(employee)
+            send_welcome_email(employee)
             logger.info(f"Welcome email sent to new employee: {employee.email}")
         except Exception as e:
-            logger.error(f"Failed to send welcome email to {employee.email}: {str(e)}\n{traceback.format_exc()}")
+            logger.error(
+                f"Failed to send welcome email to {employee.email}: {str(e)}\n{traceback.format_exc()}"
+            )
 
         headers = self.get_success_headers(serializer.data)
         return Response(
             serializer.data, status=status.HTTP_201_CREATED, headers=headers
         )
-
 
     def destroy(self, request, *args, **kwargs):
         """Override destroy to perform a soft delete by setting is_active to False."""
@@ -403,7 +420,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
-            send_email(employee)
+            send_welcome_email(employee)
             logger.info(f"Resent welcome email to employee: {employee.email}.")
         except Exception as e:
             logger.error(
