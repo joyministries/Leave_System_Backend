@@ -305,10 +305,11 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         employee = self.get_object()
+        employee.is_deleted = True
         employee.is_active = False
         employee.save()
         return Response(
-            {"message": "Employee deactivated successfully."},
+            {"message": "Employee record removed successfully."},
             status=status.HTTP_204_NO_CONTENT,
         )
 
@@ -319,15 +320,20 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         serializer = LeaveSerializer(leaves, many=True)
         return Response(serializer.data)
 
-    @action(detail=True, methods=["post"])
+    @action(detail=True, methods=["patch"])
     def toggle_active(self, request, pk=None):
+        """
+        Toggle active status instead of hard deleting, we set is_active to False and is_deleted to True.
+        """
         employee = self.get_object()
         employee.is_active = not employee.is_active
         employee.save()
+        status_label = 'activated' if employee.is_active else 'deactivated'
+        logger.info(f"Employee {employee.email} has been {status_label}.")
 
         return Response(
             {
-                "message": f"Employee {'activated' if employee.is_active else 'deactivated'} successfully."
+                "message": f"Employee {employee.email} has been {status_label}."
             },
             status=status.HTTP_200_OK,
         )
@@ -400,7 +406,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
 
         return Response(
             {
-                "message": f"Leave type {'activated' if leave_type.is_active else 'deactivated'} successfully."
+                "message": f"Leave type {leave_type.name} has been {'activated' if leave_type.is_active else 'deactivated'} successfully."
             },
             status=status.HTTP_200_OK,
         )

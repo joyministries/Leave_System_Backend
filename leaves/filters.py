@@ -9,6 +9,8 @@ class RoleBasedAccessFilter(filters.BaseFilterBackend):
     """
     def filter_queryset(self, request, queryset, view):
         user = request.user
+
+        queryset = queryset.filter(is_deleted=False) 
         
         # Bypass filtering if the user isn't authenticated
         if not user or not user.is_authenticated:
@@ -16,16 +18,16 @@ class RoleBasedAccessFilter(filters.BaseFilterBackend):
 
         user_role = str(user.role).upper() if user.role else ""
 
-        # 1. ADMIN: Global access, sees everything
-        if user_role == 'ADMIN':
+        # 1. ADMIN & MANAGER: Global access, sees everything
+        if user_role in ['ADMIN', 'MANAGER']:
             return queryset
 
         # Get the field names specific to the current ViewSet's model
         institution_field = getattr(view, 'institution_lookup_field', None)
         employee_field = getattr(view, 'employee_lookup_field', None)
 
-        # 2. HR & MANAGER: Localized access to their institution
-        if user_role in ['HR', 'MANAGER']:
+        # 2. HR: Localized access to their institution
+        if user_role in ['HR']:
             if user.institution and institution_field:
                 # Creates a dynamic filter like: .filter(employee__institution=user.institution)
                 return queryset.filter(**{institution_field: user.institution})

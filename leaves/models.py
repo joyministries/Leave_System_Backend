@@ -83,6 +83,7 @@ class Employee(AbstractUser):
     )
     must_reset_password = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    is_deleted = models.BooleanField(default=False)
 
     objects = EmailUserManager()
 
