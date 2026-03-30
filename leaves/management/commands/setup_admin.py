@@ -1,6 +1,10 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from leaves.models import Institution, LeaveType
+from dotenv import load_dotenv
+import os
+
+load_dotenv() 
 
 class Command(BaseCommand):
     help = 'Creates initial admin, default institution, and standard leave types'
@@ -12,7 +16,7 @@ class Command(BaseCommand):
 
         # 1. Create Default Institution
         institution, created = Institution.objects.get_or_create(
-            name="Main Campus"
+            name="Team Impact Christian University",
         )
         if created:
             self.stdout.write(self.style.SUCCESS(f'Created Institution: {institution.name}'))
@@ -39,8 +43,8 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f'Created Leave Type: {obj.name}'))
 
         # 3. Create the Initial Superuser
-        admin_email = "admin@tciuniversity.com"
-        admin_password = "AdminPass123!"  
+        admin_email = os.getenv("ADMIN_EMAIL")
+        admin_password = os.getenv("ADMIN_PASSWORD")
 
         if not Employee.objects.filter(email=admin_email).exists():
             admin = Employee.objects.create_superuser(
@@ -50,8 +54,8 @@ class Command(BaseCommand):
                 last_name="Administrator",
                 role=Employee.Role.ADMIN,
                 institution=institution,
-                department="Human Resources",
-                position="HR Director"
+                department="System",
+                position="Director"
             )
             
             # Explicitly set this to False so you don't get locked out by your own 

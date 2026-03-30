@@ -37,7 +37,7 @@ from .utils import (
     leave_request_status_email,
     leave_request_submitted_email,
 )
-from .permissions import IsAdminRole, IsAdminOrManager
+from .permissions import IsAdminRole, IsAdminOrDirector, IsManagerOrHREmployeeOnly
 import logging
 import traceback
 
@@ -206,7 +206,7 @@ class MeView(APIView):
 class InstitutionViewSet(viewsets.ModelViewSet):
     queryset = Institution.objects.all()
     serializer_class = InstitutionSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrManager]
+    permission_classes = [IsAuthenticated, IsAdminOrDirector]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
 
@@ -230,7 +230,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["get"],
-        permission_classes=[IsAuthenticated, IsAdminOrManager],
+        permission_classes=[IsAuthenticated, IsAdminOrDirector],
     )
     def employees(self, request, pk=None):
         institution = self.get_object()
@@ -242,7 +242,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["get"],
-        permission_classes=[IsAuthenticated, IsAdminOrManager],
+        permission_classes=[IsAuthenticated, IsAdminOrDirector],
     )
     def employee_count(self, request, pk=None):
         count = self.get_object().employees.filter(is_active=True).count()
@@ -256,7 +256,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
 
 class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.select_related("institution").filter(is_deleted=False)
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsManagerOrHREmployeeOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, RoleBasedAccessFilter]
     filterset_fields = {
         "department": ["exact", "icontains"],
@@ -344,7 +344,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         detail=True,
         methods=["post"],
         url_path="resend_invite",
-        permission_classes=[IsAuthenticated, IsAdminOrManager],
+        permission_classes=[IsAuthenticated, IsManagerOrHREmployeeOnly],
     )
     def resend_invite(self, request, pk=None):
         """Resend the account creation email — useful if the link expired."""
@@ -386,7 +386,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     queryset = LeaveType.objects.all()
     serializer_class = LeaveTypeSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrManager]
+    permission_classes = [IsAuthenticated, IsAdminOrDirector]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["name"]
 
@@ -395,7 +395,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy"]:
-            return [IsAuthenticated(), IsAdminOrManager()]
+            return [IsAuthenticated(), IsAdminOrDirector()]
         return [IsAuthenticated()]
 
     def destroy(self, request, *args, **kwargs):
@@ -486,10 +486,14 @@ class LeaveViewSet(viewsets.ModelViewSet):
         return Response(
             {"message": "Leave request cancelled."}, status=status.HTTP_200_OK
         )
-    
-    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+
+    @action(
+        detail=True,
+        methods=["post"],
+        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+    )
     def update_status(self, request, pk=None):
-        """Approve or reject a leave request. ADMIN / HR / MANAGER only."""
+        """Approve or reject a leave request. ADMIN / DIRECTOR only."""
         try:
             leave = self.get_object()
 
@@ -537,20 +541,23 @@ class LeaveViewSet(viewsets.ModelViewSet):
         except Exception as e:
             # === THE DEBUG TRAP ===
             error_trace = traceback.format_exc()
-            
+
             # 1. Print a massive, unmissable block in your terminal
-            print("\n" + "="*50)
+            print("\n" + "=" * 50)
             print("🚨 CRITICAL 500 ERROR CAUGHT IN UPDATE_STATUS 🚨")
-            print("="*50)
+            print("=" * 50)
             print(error_trace)
-            print("="*50 + "\n")
-            
+            print("=" * 50 + "\n")
+
             # 2. Send the exact error directly back to your Vite frontend
-            return Response({
-                "message": "A server error occurred.",
-                "developer_error": str(e),
-                "traceback": error_trace
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {
+                    "message": "A server error occurred.",
+                    "developer_error": str(e),
+                    "traceback": error_trace,
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
     @action(detail=True, methods=["post"])
     def cancel(self, request, pk=None):

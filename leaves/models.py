@@ -49,16 +49,18 @@ class Employee(AbstractUser):
     Custom user model — uses email as the login field.
 
     Roles control dashboard routing and data visibility:
-      STAFF    → sees only their own records
-      MANAGER  → sees all records (global)
-      HR       → sees records within their institution
-      ADMIN    → full system access, Django admin
+      STAFF     → sees only their own records
+      MANAGER   → can view and add employees only
+      HR        → can view and add employees only (institution-scoped)
+      DIRECTOR  → same as Admin (global access)
+      ADMIN     → full system access, Django admin
     """
 
     class Role(models.TextChoices):
         STAFF = "STAFF", "Staff"
         MANAGER = "MANAGER", "Manager"
         HR = "HR", "HR"
+        DIRECTOR = "DIRECTOR", "Director"
         ADMIN = "ADMIN", "Admin"
 
     username = None
@@ -87,14 +89,23 @@ class Employee(AbstractUser):
     objects = EmailUserManager()
 
     USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["first_name", "last_name", "department", "position", "institution", "role"]
+    REQUIRED_FIELDS = [
+        "first_name",
+        "last_name",
+        "department",
+        "position",
+        "institution",
+        "role",
+    ]
 
     def __str__(self):
-        return f"{self.first_name} {self.last_name} ({self.department} - {self.position})"
+        return (
+            f"{self.first_name} {self.last_name} ({self.department} - {self.position})"
+        )
 
     def save(self, *args, **kwargs):
-        # Only HR and above get Django admin access
-        self.is_staff = self.role in [self.Role.HR, self.Role.ADMIN]
+        # Only HR, DIRECTOR, and ADMIN get Django admin access
+        self.is_staff = self.role in [self.Role.HR, self.Role.DIRECTOR, self.Role.ADMIN]
         super().save(*args, **kwargs)
 
 
@@ -112,18 +123,18 @@ class LeaveType(models.Model):
     max_days = models.PositiveIntegerField(
         help_text="Maximum number of *paid* days allowed per leave application"
     )
-    
+
     allowed_month = models.IntegerField(
         blank=True,
         null=True,
-        validators = [MinValueValidator(1), MaxValueValidator(12)],
-        help_text="Set a specific month (1-12) this leave is restricted to. Leave blank for year round availability."
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        help_text="Set a specific month (1-12) this leave is restricted to. Leave blank for year round availability.",
     )
     is_active = models.BooleanField(
         default=True,
-        help_text="Whether this leave type is available for new applications"
+        help_text="Whether this leave type is available for new applications",
     )
-    
+
     class Meta:
         verbose_name = "Leave Type"
         verbose_name_plural = "Leave Types"
@@ -173,7 +184,7 @@ class Leave(models.Model):
         default=Status.PENDING,
     )
     admin_remarks = models.TextField(blank=True, null=True)
-    
+
     # Calculated on save — days requested beyond the leave type's max_days
     extra_unpaid_days = models.IntegerField(
         default=0,
@@ -201,19 +212,26 @@ class Leave(models.Model):
                 raise ValidationError("Start date cannot be in the past.")
             if self.duration <= 0:
                 raise ValidationError("Leave duration must be at least one day.")
-            
-            if self.leave_type_id and self.leave_type.allowed_month:
-                if self.start_date.month != self.leave_type.allowed_month or self.end_date.month != self.leave_type.allowed_month:
-                    raise ValidationError(f"This leave type can only be taken in month {self.leave_type.allowed_month}.")
-                month_name = date(2000, self.leave_type.allowed_month, 1).strftime('%B')
 
-                raise ValidationError(f"This {self.leave_type.name} can only be taken in {month_name}.")
+            if self.leave_type_id and self.leave_type.allowed_month:
+                if (
+                    self.start_date.month != self.leave_type.allowed_month
+                    or self.end_date.month != self.leave_type.allowed_month
+                ):
+                    raise ValidationError(
+                        f"This leave type can only be taken in month {self.leave_type.allowed_month}."
+                    )
+                month_name = date(2000, self.leave_type.allowed_month, 1).strftime("%B")
+
+                raise ValidationError(
+                    f"This {self.leave_type.name} can only be taken in {month_name}."
+                )
 
     @property
     def duration(self):
         """Total calendar days requested (inclusive)."""
         from .utils import calculate_working_days
-        
+
         if self.start_date and self.end_date:
             return calculate_working_days(self.start_date, self.end_date)
         return 0
@@ -224,7 +242,9 @@ class Leave(models.Model):
         return max(0, self.duration - self.extra_unpaid_days)
 
     def __str__(self):
-        name = getattr(self.employee, "get_full_name", lambda: "")() or self.employee.email
+        name = (
+            getattr(self.employee, "get_full_name", lambda: "")() or self.employee.email
+        )
         return f"{name} — {self.leave_type} ({self.start_date} → {self.end_date})"
 
 
@@ -247,7 +267,9 @@ class LeaveBalance(models.Model):
         on_delete=models.CASCADE,
         related_name="balances",
     )
-    year = models.PositiveIntegerField(help_text="Calendar year this balance applies to")
+    year = models.PositiveIntegerField(
+        help_text="Calendar year this balance applies to"
+    )
     days_used = models.DecimalField(
         max_digits=5,
         decimal_places=1,
