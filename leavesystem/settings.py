@@ -95,8 +95,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # React development server
     "http://localhost:5174",  # React development server
     "http://localhost:5175",  # React development server
-    "https://lms-frontend-nine-gules.vercel.app",
-    "https://tci-universityleavesystem.vercel.app",  # Deployed frontend URL
+    "https://leave-system.joyministries.co.za/",
 ]
 CORS_ALLOW_ALL_ORIGINS = False
 CSRF_TRUSTED_ORIGINS = os.environ.get("CSRF_TRUSTED_ORIGINS").split(",")
