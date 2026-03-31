@@ -35,7 +35,7 @@ SECRET_KEY = config("SECRET_KEY")
 ALLOWED_HOSTS = [
     "localhost",
     "127.0.0.1",
-    "lms-backend-658v.onrender.com",
+    "leave-system-backend-9ofz.onrender.com",
 ]
 
 
