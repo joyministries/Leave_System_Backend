@@ -75,6 +75,7 @@ AWS_S3_FILE_OVERWRITE = os.getenv("AWS_S3_FILE_OVERWRITE")
 AWS_QUERYSTRING_AUTH = os.getenv("AWS_QUERYSTRING_AUTH")
 AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN")
 AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL")
+AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE"))
 
 STORAGES = {
     "default": {
@@ -90,6 +91,7 @@ STORAGES = {
             "file_overwrite": AWS_S3_FILE_OVERWRITE,
             "custom_domain": AWS_S3_CUSTOM_DOMAIN,
             "querystring_auth": AWS_QUERYSTRING_AUTH,
+            "querystring_expire": AWS_QUERYSTRING_EXPIRE,
         },
     },
     "staticfiles": {
