@@ -11,6 +11,7 @@ from django.contrib.auth import authenticate
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Count, Sum, Max, Q, F
+from django.http import FileResponse
 import datetime
 
 from .filters import RoleBasedAccessFilter
@@ -670,6 +671,96 @@ class LeaveViewSet(viewsets.ModelViewSet):
         summary_data = _build_leave_summary(request.user)
         serializer = LeaveSummarySerializer(summary_data, many=True)
         return Response(serializer.data)
+    
+
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+    def download_document(self, request, pk=None):
+        """
+        Download supporting document for a leave request.
+        Only the employee who submitted the leave or admins can download.
+        """
+        try:
+            leave = self.get_object()
+
+            # Permission check: only employee or admin/director can download
+            if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
+                return Response(
+                    {"error": "Permission denied"},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Check if document exists
+            if not leave.supporting_document:
+                return Response(
+                    {"error": "No document attached to this leave request"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Serve the file
+            file_path = leave.supporting_document.path
+            file_name = leave.supporting_document.name.split('/')[-1]
+
+            response = FileResponse(open(file_path, 'rb'))
+            response['Content-Type'] = 'application/octet-stream'
+            response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+            return response
+
+        except FileNotFoundError:
+            return Response(
+                {"error": "Document file not found on server"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error downloading document: {e}")
+            return Response(
+                {"error": "Failed to download document"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+@action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
+def download_document(self, request, pk=None):
+    """
+    Download supporting document for a leave request.
+    Only the employee who submitted the leave or admins can download.
+    """
+    try:
+        leave = self.get_object()
+        
+        # Permission check: only employee or admin/director can download
+        if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
+            return Response(
+                {"error": "Permission denied"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Check if document exists
+        if not leave.supporting_document:
+            return Response(
+                {"error": "No document attached to this leave request"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Serve the file
+        file_path = leave.supporting_document.path
+        file_name = leave.supporting_document.name.split('/')[-1]
+        
+        response = FileResponse(open(file_path, 'rb'))
+        response['Content-Type'] = 'application/octet-stream'
+        response['Content-Disposition'] = f'attachment; filename="{file_name}"'
+        return response
+        
+    except FileNotFoundError:
+        return Response(
+            {"error": "Document file not found on server"},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error downloading document: {e}")
+        return Response(
+            {"error": "Failed to download document"},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
 
 
 # =============================================================================
