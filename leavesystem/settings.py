@@ -64,17 +64,37 @@ INSTALLED_APPS = [
 
 AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
-AWS_STORAGE_BUCKET_NAME = "leave-documents" # The bucket name you created
-AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL")  # e.g., "https://s3.amazonaws.com" or your S3-compatible endpoint
-AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")  # e.g., "us-east-1"
+AWS_STORAGE_BUCKET_NAME = "leave-documents"
+AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL")
+AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME")
+
+# S3 Signature and URL Configuration
+AWS_S3_SIGNATURE_VERSION = os.getenv("AWS_S3_SIGNATURE_VERSION")
+AWS_S3_ADDRESSING_STYLE = os.getenv("AWS_S3_ADDRESSING_STYLE")
+AWS_S3_FILE_OVERWRITE = os.getenv("AWS_S3_FILE_OVERWRITE")
+AWS_QUERYSTRING_AUTH = os.getenv("AWS_QUERYSTRING_AUTH")
+AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN")
+AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL")
 
 STORAGES = {
-    "default":{
+    "default": {
         "BACKEND": "storages.backends.s3.S3Storage",
+        "OPTIONS": {
+            "access_key": AWS_ACCESS_KEY_ID,
+            "secret_key": AWS_SECRET_ACCESS_KEY,
+            "bucket_name": AWS_STORAGE_BUCKET_NAME,
+            "endpoint_url": AWS_S3_ENDPOINT_URL,
+            "region_name": AWS_S3_REGION_NAME,
+            "signature_version": AWS_S3_SIGNATURE_VERSION,
+            "addressing_style": AWS_S3_ADDRESSING_STYLE,
+            "file_overwrite": AWS_S3_FILE_OVERWRITE,
+            "custom_domain": AWS_S3_CUSTOM_DOMAIN,
+            "querystring_auth": AWS_QUERYSTRING_AUTH,
+        },
     },
-    "staticfiles":{
+    "staticfiles": {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-    }
+    },
 }
 
 MIDDLEWARE = [
@@ -193,15 +213,6 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# Email configuration - Gmail SMTP
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.getenv("EMAIL_HOST")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
-EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
-EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = os.getenv("EMAIL_HOST_USER")
-
 AUTH_USER_MODEL = "leaves.Employee"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
@@ -221,14 +232,13 @@ LOGGING = {
     },
 }
 
-# Email configuration (console backend for development)
+# Email configuration (Resend backend)
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND")
-EMAIL_HOST = os.getenv("EMAIL_HOST")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", 2525))
 EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True") == "True"
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
-DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER)
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@joyministries.co.za")
 ANYMAIL = {
     "RESEND_API_KEY": os.getenv("RESEND_API_KEY"),
 }

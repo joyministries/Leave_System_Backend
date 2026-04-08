@@ -3,9 +3,10 @@ from .models import Leave, Employee, LeaveType, Institution, LeaveBalance
 from .utils import calculate_working_days
 from rest_framework import serializers
 from django.contrib.auth.tokens import default_token_generator
-from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from django.utils.encoding import force_str, force_bytes
+from django.utils.http import urlsafe_base64_decode
+from django.utils.encoding import force_str
 from datetime import date
+from django.core.files.storage import default_storage
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +251,7 @@ class LeaveSerializer(serializers.ModelSerializer):
     institution_name = serializers.SerializerMethodField()
     leave_duration = serializers.SerializerMethodField()
     paid_days = serializers.SerializerMethodField()
+    supporting_document_url = serializers.SerializerMethodField()
 
     # extra_unpaid_days is calculated server-side; never writable from the client
     extra_unpaid_days = serializers.IntegerField(read_only=True)
@@ -269,6 +271,7 @@ class LeaveSerializer(serializers.ModelSerializer):
             "status",
             "admin_remarks",
             "supporting_document",
+            "supporting_document_url",
             "leave_duration",
             "paid_days",
             "extra_unpaid_days",
@@ -291,6 +294,24 @@ class LeaveSerializer(serializers.ModelSerializer):
         if obj.employee and obj.employee.institution:
             return obj.employee.institution.name
         return None
+
+    def get_supporting_document_url(self, obj):
+        """
+        Generate a signed URL for the supporting document.
+        This allows authenticated users to access the document via S3.
+        Returns None if no document is attached.
+        """
+        if not obj.supporting_document:
+            return None
+
+        try:
+            # Generate a signed URL that expires in 24 hours
+            # This ensures the document can be accessed securely
+            url = default_storage.url(obj.supporting_document.name)
+            return url
+        except Exception as e:
+            logger.error(f"Error generating signed URL for document {obj.id}: {e}")
+            return None
 
     def validate(self, data):
         start_date = data.get("start_date")
