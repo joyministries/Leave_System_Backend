@@ -678,90 +678,49 @@ class LeaveViewSet(viewsets.ModelViewSet):
     def download_document(self, request, pk=None):
         """
         Download supporting document for a leave request.
+        Works with any storage backend (local, S3, etc).
         Only the employee who submitted the leave or admins can download.
         """
         try:
             leave = self.get_object()
-
+    
             # Permission check: only employee or admin/director can download
             if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
                 return Response(
                     {"error": "Permission denied"},
                     status=status.HTTP_403_FORBIDDEN
                 )
-
+    
             # Check if document exists
             if not leave.supporting_document:
                 return Response(
                     {"error": "No document attached to this leave request"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-
-            # Serve the file
-            file_path = leave.supporting_document.path
+    
+            # Get file name and extension
             file_name = leave.supporting_document.name.split('/')[-1]
-
-            response = FileResponse(open(file_path, 'rb'))
-            response['Content-Type'] = 'application/octet-stream'
+            
+            # Read file content from storage (works with S3, local, etc)
+            file_content = leave.supporting_document.read()
+            
+            # Determine MIME type based on extension
+            import mimetypes
+            mime_type, _ = mimetypes.guess_type(file_name)
+            mime_type = mime_type or 'application/octet-stream'
+            
+            # Return file as streaming response
+            from django.http import HttpResponse
+            response = HttpResponse(file_content, content_type=mime_type)
             response['Content-Disposition'] = f'attachment; filename="{file_name}"'
             return response
-
-        except FileNotFoundError:
-            return Response(
-                {"error": "Document file not found on server"},
-                status=status.HTTP_404_NOT_FOUND
-            )
+    
         except Exception as e:
-            logger.error(f"Error downloading document: {e}")
+            logger.error(f"Error downloading document: {e}\n{traceback.format_exc()}")
             return Response(
-                {"error": "Failed to download document"},
+                {"error": "Failed to download document", "detail": str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-@action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
-def download_document(self, request, pk=None):
-    """
-    Download supporting document for a leave request.
-    Only the employee who submitted the leave or admins can download.
-    """
-    try:
-        leave = self.get_object()
-        
-        # Permission check: only employee or admin/director can download
-        if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
-            return Response(
-                {"error": "Permission denied"},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        
-        # Check if document exists
-        if not leave.supporting_document:
-            return Response(
-                {"error": "No document attached to this leave request"},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        # Serve the file
-        file_path = leave.supporting_document.path
-        file_name = leave.supporting_document.name.split('/')[-1]
-        
-        response = FileResponse(open(file_path, 'rb'))
-        response['Content-Type'] = 'application/octet-stream'
-        response['Content-Disposition'] = f'attachment; filename="{file_name}"'
-        return response
-        
-    except FileNotFoundError:
-        return Response(
-            {"error": "Document file not found on server"},
-            status=status.HTTP_404_NOT_FOUND
-        )
-    except Exception as e:
-        logger.error(f"Error downloading document: {e}")
-        return Response(
-            {"error": "Failed to download document"},
-            status=status.HTTP_500_INTERNAL_SERVER_ERROR
-        )
-
 
 # =============================================================================
 # HELPERS
