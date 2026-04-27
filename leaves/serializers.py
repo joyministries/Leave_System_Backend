@@ -358,7 +358,7 @@ class LeaveSerializer(serializers.ModelSerializer):
 class LeaveStatusUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Leave
-        fields = ["status", "admin_remarks", "start_date", "end_date"]
+        fields = ["status", "admin_remarks"]
 
     def validate_status(self, value):
         if value not in Leave.Status.values:

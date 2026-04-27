@@ -13,6 +13,7 @@ from django.db import transaction
 from django.db.models import Count, Sum, Max, Q, F
 from django.http import FileResponse
 import datetime
+import calendar
 
 from .filters import RoleBasedAccessFilter
 from .models import Institution, Employee, LeaveType, Leave, LeaveBalance
@@ -427,7 +428,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
 
 
 class StandardResultsSetPagination(PageNumberPagination):
-    page_size = 10
+    page_size = 20
     page_size_query_param = "page_size"
     max_page_size = 100
 
@@ -498,7 +499,7 @@ class LeaveViewSet(viewsets.ModelViewSet):
         try:
             leave = self.get_object()
 
-            if leave.status == Leave.Status.REJECTED:
+            if leave.status in [Leave.Status.REJECTED, Leave.Status.CANCELLED]:
                 return Response(
                     {"error": "Cannot update a cancelled or rejected leave request."},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -597,6 +598,7 @@ class LeaveViewSet(viewsets.ModelViewSet):
         qs = self.filter_queryset(self.get_queryset())
         employee_id = request.query_params.get("employee_id")
         time_filter = request.query_params.get("time_filter", "all")
+        leave_type_name = request.query_params.get("leave_type_name")  # e.g. "sick leave"
 
         if employee_id:
             qs = qs.filter(employee_id=employee_id)
@@ -605,6 +607,9 @@ class LeaveViewSet(viewsets.ModelViewSet):
             qs = qs.filter(
                 start_date__gte=(timezone.now() - datetime.timedelta(days=30)).date()
             )
+
+        if leave_type_name:
+            qs = qs.filter(leave_type__name__iexact=leave_type_name)
 
         qs = qs.order_by("-start_date", "-created_at")
         page = self.paginate_queryset(qs)
@@ -671,8 +676,196 @@ class LeaveViewSet(viewsets.ModelViewSet):
         summary_data = _build_leave_summary(request.user)
         serializer = LeaveSummarySerializer(summary_data, many=True)
         return Response(serializer.data)
-    
 
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="monthly-report",
+        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+    )
+    def monthly_report(self, request):
+        """
+        Returns all leave requests that overlap a given calendar month,
+        with a status breakdown summary and a full per-leave detail list.
+
+        A leave is included if it overlaps the month at all:
+            leave.start_date <= last_day_of_month
+            AND leave.end_date >= first_day_of_month
+
+        Query params:
+            year  (int, default: current year)   e.g. ?year=2026
+            month (int, default: current month)  e.g. ?month=4
+
+        Example:
+            GET /api/leaves/monthly-report/?year=2026&month=4
+        """
+        today = datetime.date.today()
+
+        # --- Parse and validate query params ---
+        try:
+            year = int(request.query_params.get("year", today.year))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "'year' must be a valid integer (e.g. 2026)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            month = int(request.query_params.get("month", today.month))
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "'month' must be a valid integer between 1 and 12."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not (1 <= month <= 12):
+            return Response(
+                {"error": "'month' must be between 1 and 12."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- Build date range for the month ---
+        first_day = datetime.date(year, month, 1)
+        last_day = datetime.date(year, month, calendar.monthrange(year, month)[1])
+        month_name = first_day.strftime("%B")  # e.g. "April"
+
+        # --- Query: leaves overlapping the month, role-scoped ---
+        qs = (
+            self.filter_queryset(self.get_queryset())
+            .filter(
+                start_date__lte=last_day,
+                end_date__gte=first_day,
+            )
+            .select_related("employee", "leave_type", "employee__institution")
+            .order_by("employee__last_name", "employee__first_name", "start_date")
+        )
+
+        # --- Status summary counts ---
+        total = qs.count()
+        summary = {
+            "total": total,
+            "approved": qs.filter(status=Leave.Status.APPROVED).count(),
+            "pending": qs.filter(status=Leave.Status.PENDING).count(),
+            "rejected": qs.filter(status=Leave.Status.REJECTED).count(),
+            "cancelled": qs.filter(status=Leave.Status.CANCELLED).count(),
+        }
+
+        # --- Per-leave detail rows ---
+        leaves = []
+        for leave in qs:
+            emp = leave.employee
+            full_name = f"{emp.first_name or ''} {emp.last_name or ''}".strip() or emp.email
+            leaves.append(
+                {
+                    "id": str(leave.id),
+                    "employee_id": str(emp.id),
+                    "employee_name": full_name,
+                    "employee_email": emp.email,
+                    "department": emp.department or "",
+                    "institution": emp.institution.name if emp.institution else None,
+                    "leave_type": leave.leave_type.name,
+                    "start_date": str(leave.start_date),
+                    "end_date": str(leave.end_date),
+                    "duration": calculate_working_days(leave.start_date, leave.end_date),
+                    "paid_days": leave.paid_days,
+                    "extra_unpaid_days": leave.extra_unpaid_days,
+                    "status": leave.status,
+                    "reason": leave.reason,
+                    "admin_remarks": leave.admin_remarks or "",
+                    "has_document": bool(leave.supporting_document),
+                    "created_at": leave.created_at.isoformat(),
+                }
+            )
+
+        return Response(
+            {
+                "year": year,
+                "month": month,
+                "month_name": month_name,
+                "period": f"{first_day} to {last_day}",
+                "summary": summary,
+                "leaves": leaves,
+            }
+        )
+
+
+    @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
+    def upload_document(self, request, pk=None):
+        """
+        Upload or replace the supporting document on an existing leave.
+
+        Rules:
+        - Only the employee who owns the leave may call this.
+        - The leave must be PENDING or APPROVED (not REJECTED or CANCELLED).
+        - Restricted to leave types that require a supporting document
+          (currently: Sick Leave, Study Leave).
+        - A file must be provided in the multipart field `supporting_document`.
+
+        Frontend usage:
+            PATCH/POST /api/leaves/{id}/upload_document/
+            Content-Type: multipart/form-data
+            Body: { supporting_document: <file> }
+        """
+        leave = self.get_object()
+
+        # Ownership check
+        if leave.employee != request.user:
+            return Response(
+                {"error": "You can only upload documents for your own leave requests."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Status guard — only open leaves can receive a new document
+        if leave.status in [Leave.Status.REJECTED, Leave.Status.CANCELLED]:
+            return Response(
+                {
+                    "error": "Documents cannot be uploaded to a rejected or cancelled leave request."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Leave-type guard — only leave types that require a document
+        DOCUMENT_REQUIRED_TYPES = ["sick leave", "study leave"]
+        if leave.leave_type.name.lower() not in DOCUMENT_REQUIRED_TYPES:
+            return Response(
+                {
+                    "error": f"Document upload is only allowed for: {', '.join(t.title() for t in DOCUMENT_REQUIRED_TYPES)}."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # File presence check
+        uploaded_file = request.FILES.get("supporting_document")
+        if not uploaded_file:
+            return Response(
+                {"error": "No file provided. Send the file under the key 'supporting_document'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Delete old file from storage before replacing (avoids orphaned files)
+        if leave.supporting_document:
+            try:
+                from django.core.files.storage import default_storage
+                default_storage.delete(leave.supporting_document.name)
+            except Exception as exc:
+                logger.warning(
+                    f"Could not delete old document for leave {leave.id}: {exc}"
+                )
+
+        leave.supporting_document = uploaded_file
+        leave.save(update_fields=["supporting_document"])
+
+        logger.info(
+            f"Employee {request.user.email} uploaded document '{uploaded_file.name}' "
+            f"for leave {leave.id} ({leave.leave_type.name})"
+        )
+        return Response(
+            {
+                "message": "Document uploaded successfully.",
+                "leave": LeaveSerializer(leave, context={"request": request}).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
     @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated])
     def download_document(self, request, pk=None):
@@ -683,38 +876,38 @@ class LeaveViewSet(viewsets.ModelViewSet):
         """
         try:
             leave = self.get_object()
-    
+
             # Permission check: only employee or admin/director can download
             if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
                 return Response(
                     {"error": "Permission denied"},
                     status=status.HTTP_403_FORBIDDEN
                 )
-    
+
             # Check if document exists
             if not leave.supporting_document:
                 return Response(
                     {"error": "No document attached to this leave request"},
                     status=status.HTTP_404_NOT_FOUND
                 )
-    
+
             # Get file name and extension
             file_name = leave.supporting_document.name.split('/')[-1]
-            
+
             # Read file content from storage (works with S3, local, etc)
             file_content = leave.supporting_document.read()
-            
+
             # Determine MIME type based on extension
             import mimetypes
             mime_type, _ = mimetypes.guess_type(file_name)
             mime_type = mime_type or 'application/octet-stream'
-            
+
             # Return file as streaming response
             from django.http import HttpResponse
             response = HttpResponse(file_content, content_type=mime_type)
             response['Content-Disposition'] = f'attachment; filename="{file_name}"'
             return response
-    
+
         except Exception as e:
             logger.error(f"Error downloading document: {e}\n{traceback.format_exc()}")
             return Response(

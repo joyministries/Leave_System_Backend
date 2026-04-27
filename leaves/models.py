@@ -152,12 +152,15 @@ class Leave(models.Model):
       expected from the frontend.
     - CANCELLED is a terminal status — cannot be undone.
     - supporting_document is required for Sick Leave and Study Leave.
+    - Employees may upload/replace supporting_document on PENDING or APPROVED
+      sick/study leaves via the upload_document endpoint.
     """
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
     employee = models.ForeignKey(
