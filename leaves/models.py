@@ -5,7 +5,6 @@ from datetime import date
 from django.conf import settings
 from django.contrib.auth.base_user import BaseUserManager
 from uuid import uuid4
-from django.core.validators import MinValueValidator, MaxValueValidator
 
 
 class Institution(models.Model):
@@ -124,11 +123,15 @@ class LeaveType(models.Model):
         help_text="Maximum number of *paid* days allowed per leave application"
     )
 
-    allowed_month = models.IntegerField(
+    allowed_months = models.JSONField(
         blank=True,
         null=True,
-        validators=[MinValueValidator(1), MaxValueValidator(12)],
-        help_text="Set a specific month (1-12) this leave is restricted to. Leave blank for year round availability.",
+        default=None,
+        help_text=(
+            "List of months (1–12) when this leave may be taken. "
+            "e.g. [1, 6, 12] means January, June, and December. "
+            "Leave null/empty for year-round availability."
+        ),
     )
     is_active = models.BooleanField(
         default=True,
@@ -216,19 +219,18 @@ class Leave(models.Model):
             if self.duration <= 0:
                 raise ValidationError("Leave duration must be at least one day.")
 
-            if self.leave_type_id and self.leave_type.allowed_month:
+            if self.leave_type_id and self.leave_type.allowed_months:
+                allowed = self.leave_type.allowed_months
                 if (
-                    self.start_date.month != self.leave_type.allowed_month
-                    or self.end_date.month != self.leave_type.allowed_month
+                    self.start_date.month not in allowed
+                    or self.end_date.month not in allowed
                 ):
-                    raise ValidationError(
-                        f"This leave type can only be taken in month {self.leave_type.allowed_month}."
+                    month_names = ", ".join(
+                        date(2000, m, 1).strftime("%B") for m in sorted(allowed)
                     )
-                month_name = date(2000, self.leave_type.allowed_month, 1).strftime("%B")
-
-                raise ValidationError(
-                    f"This {self.leave_type.name} can only be taken in {month_name}."
-                )
+                    raise ValidationError(
+                        f"This {self.leave_type.name} can only be taken in: {month_names}."
+                    )
 
     @property
     def duration(self):

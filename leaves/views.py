@@ -392,7 +392,7 @@ class LeaveTypeViewSet(viewsets.ModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
     search_fields = ["name"]
 
-    filterset_fields = ["is_active", "allowed_month"]
+    filterset_fields = ["is_active"]
     search_fields = ["name"]
 
     def get_permissions(self):
@@ -471,7 +471,18 @@ class LeaveViewSet(viewsets.ModelViewSet):
         logger.info(
             f"Leave request created: Employee {leave.employee.email}, Type {leave.leave_type.name}, Duration {leave.duration} days (including {leave.extra_unpaid_days} unpaid)"
         )
-        leave_request_submitted_email(leave.employee, leave_request=leave)
+
+        # Notify the submitting employee
+        try:
+            leave_request_submitted_email(leave.employee, leave_request=leave)
+        except Exception as exc:
+            logger.error(f"Failed to send submission confirmation to {leave.employee.email}: {exc}")
+
+        # Notify HR, Admins, and the department Manager
+        try:
+            leave_request_notification_email(leave.employee, leave_request=leave)
+        except Exception as exc:
+            logger.error(f"Failed to send admin notification for leave {leave.id}: {exc}")
 
     def destroy(self, request, *args, **kwargs):
         leave = self.get_object()
@@ -981,7 +992,6 @@ def _build_leave_summary(employee):
     for lt in active_leave_types:
         lt_id = lt.id
         max_days = lt.max_days
-        allowed_month = lt.allowed_month
 
         # Get balance data (default to 0 if the employee hasn't used any yet)
         balance = balances.get(lt_id)
@@ -1006,7 +1016,7 @@ def _build_leave_summary(employee):
                 "leave_type_id": lt_id,
                 "leave_type_name": lt.name,
                 "max_days": max_days,
-                "allowed_month": allowed_month,
+                "allowed_months": lt.allowed_months,
                 "days_used": days_used,
                 "days_remaining": days_remaining,
                 "last_start_date": str(last_start) if last_start else None,

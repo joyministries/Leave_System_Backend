@@ -204,7 +204,21 @@ class PostLoginPasswordSerializer(serializers.Serializer):
 class LeaveTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model = LeaveType
-        fields = ["id", "name", "max_days", "allowed_month", "is_active"]
+        fields = ["id", "name", "max_days", "allowed_months", "is_active"]
+
+    def validate_allowed_months(self, value):
+        """Ensure the list only contains valid month numbers 1–12 with no duplicates."""
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise serializers.ValidationError("allowed_months must be a list of integers.")
+        if not all(isinstance(m, int) and 1 <= m <= 12 for m in value):
+            raise serializers.ValidationError(
+                "Each month must be an integer between 1 and 12."
+            )
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Duplicate month values are not allowed.")
+        return sorted(value)
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +234,7 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
 
     leave_type_name = serializers.ReadOnlyField(source="leave_type.name")
     max_days = serializers.ReadOnlyField(source="leave_type.max_days")
-    allowed_month = serializers.ReadOnlyField(source="leave_type.allowed_month")
+    allowed_months = serializers.ReadOnlyField(source="leave_type.allowed_months")
     days_remaining = serializers.SerializerMethodField()
 
     class Meta:
@@ -230,6 +244,7 @@ class LeaveBalanceSerializer(serializers.ModelSerializer):
             "leave_type",
             "leave_type_name",
             "max_days",
+            "allowed_months",
             "days_used",
             "days_remaining",
             "year",
@@ -329,15 +344,17 @@ class LeaveSerializer(serializers.ModelSerializer):
                 {"leave_type": f"'{leave_type.name}' is currently inactive."}
             )
 
-        if leave_type and leave_type.allowed_month and start_date and end_date:
-            if (
-                start_date.month != leave_type.allowed_month
-                or end_date.month != leave_type.allowed_month
-            ):
-                month_name = date(2000, leave_type.allowed_month, 1).strftime("%B")
+        if leave_type and leave_type.allowed_months and start_date and end_date:
+            allowed = leave_type.allowed_months
+            if start_date.month not in allowed or end_date.month not in allowed:
+                month_names = ", ".join(
+                    date(2000, m, 1).strftime("%B") for m in sorted(allowed)
+                )
                 raise serializers.ValidationError(
                     {
-                        "start_date": f"This leave type can only be taken in {month_name}."
+                        "start_date": (
+                            f"This leave type can only be taken in: {month_names}."
+                        )
                     }
                 )
 
@@ -390,7 +407,9 @@ class LeaveSummarySerializer(serializers.Serializer):
     leave_type_id = serializers.IntegerField()
     leave_type_name = serializers.CharField()
     max_days = serializers.IntegerField()
-    allowed_month = serializers.IntegerField(allow_null=True)
+    allowed_months = serializers.ListField(
+        child=serializers.IntegerField(), allow_null=True
+    )
     days_used = serializers.DecimalField(max_digits=5, decimal_places=1)
     days_remaining = serializers.DecimalField(max_digits=5, decimal_places=1)
     last_start_date = serializers.DateField(allow_null=True)

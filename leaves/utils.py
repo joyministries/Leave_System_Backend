@@ -198,13 +198,14 @@ def leave_request_notification_email(employee, leave_request):
         )
 
     # 3. Combine lists and remove duplicates using set()
-    recipient_emails = list(set(hr_admin_emails + manager_emails))
+    # Always include the system admin (DEFAULT_FROM_EMAIL) as a guaranteed recipient
+    recipient_emails = list(set(hr_admin_emails + manager_emails + [settings.DEFAULT_FROM_EMAIL]))
 
     # 4. Fallback safeguard
-    # If the institution is brand new and has no active HR/Managers yet, 
-    # route to a global admin so the request isn't lost in the void.
+    # If the institution is brand new and has no active HR/Managers yet,
+    # route to the ADMIN_EMAIL so the request isn't lost in the void.
     if not recipient_emails:
-        logger.warning(f"No valid recipients found for leave request {leave_request.id}. Falling back to default admin.")
+        logger.warning(f"No valid recipients found for leave request {leave_request.id}. Falling back to ADMIN_EMAIL.")
         recipient_emails = [settings.ADMIN_EMAIL]
 
     full_name = f"{employee.first_name} {employee.last_name}".strip()

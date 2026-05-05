@@ -75,7 +75,7 @@ AWS_S3_FILE_OVERWRITE = os.getenv("AWS_S3_FILE_OVERWRITE")
 AWS_QUERYSTRING_AUTH = os.getenv("AWS_QUERYSTRING_AUTH")
 AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN")
 AWS_DEFAULT_ACL = os.getenv("AWS_DEFAULT_ACL")
-AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE"))
+AWS_QUERYSTRING_EXPIRE = int(os.getenv("AWS_QUERYSTRING_EXPIRE", "3600"))
 
 STORAGES = {
     "default": {
@@ -120,7 +120,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://leave-system.joyministries.co.za",
 ]
 CORS_ALLOW_ALL_ORIGINS = False
-CSRF_TRUSTED_ORIGINS = os.environ.get("CSRF_TRUSTED_ORIGINS").split(",")
+CSRF_TRUSTED_ORIGINS = os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if os.environ.get("CSRF_TRUSTED_ORIGINS") else []
 
 TEMPLATES = [
     {
@@ -244,3 +244,6 @@ DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "noreply@joyministries.co.z
 ANYMAIL = {
     "RESEND_API_KEY": os.getenv("RESEND_API_KEY"),
 }
+
+# Fallback address for admin notifications when no HR/Admin employees exist in the DB
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", DEFAULT_FROM_EMAIL)
