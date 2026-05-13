@@ -247,3 +247,6 @@ ANYMAIL = {
 
 # Fallback address for admin notifications when no HR/Admin employees exist in the DB
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", DEFAULT_FROM_EMAIL)
+
+# Email address to receive all leave request notifications
+LEAVE_NOTIFICATION_EMAIL = os.getenv("LEAVE_NOTIFICATION_EMAIL", DEFAULT_FROM_EMAIL)

@@ -174,39 +174,8 @@ def leave_request_submitted_email(employee, leave_request):
 def leave_request_notification_email(employee, leave_request):
     """Send a notification email to the relevant Managers, HR, and Admins."""
 
-    # 1. Fetch HR and Admins for the entire institution
-    hr_admin_emails = list(
-        Employee.objects.filter(
-            institution=employee.institution,
-            role__in=[Employee.Role.HR, Employee.Role.ADMIN],
-            is_active=True,
-            is_deleted=False  # Respecting your soft-delete architecture
-        ).values_list('email', flat=True)
-    )
-
-    # 2. Fetch Managers for the specific department
-    manager_emails = []
-    if employee.department:
-        manager_emails = list(
-            Employee.objects.filter(
-                institution=employee.institution,
-                department=employee.department,
-                role=Employee.Role.MANAGER,
-                is_active=True,
-                is_deleted=False
-            ).values_list('email', flat=True)
-        )
-
-    # 3. Combine lists and remove duplicates using set()
-    # Always include the system admin (DEFAULT_FROM_EMAIL) as a guaranteed recipient
-    recipient_emails = list(set(hr_admin_emails + manager_emails + [settings.DEFAULT_FROM_EMAIL]))
-
-    # 4. Fallback safeguard
-    # If the institution is brand new and has no active HR/Managers yet,
-    # route to the ADMIN_EMAIL so the request isn't lost in the void.
-    if not recipient_emails:
-        logger.warning(f"No valid recipients found for leave request {leave_request.id}. Falling back to ADMIN_EMAIL.")
-        recipient_emails = [settings.ADMIN_EMAIL]
+    # Override: Send all notification emails to a specific administrator defined in settings
+    recipient_emails = [settings.LEAVE_NOTIFICATION_EMAIL]
 
     full_name = f"{employee.first_name} {employee.last_name}".strip()
     
@@ -220,17 +189,15 @@ def leave_request_notification_email(employee, leave_request):
     })
 
     message = EmailMultiAlternatives(
-        # Including the employee name in the subject helps HR filter their inbox
         subject=f'New Leave Request Submitted by {full_name or employee.email}',
         body=html_content,
         from_email=settings.DEFAULT_FROM_EMAIL,
-        to=recipient_emails, 
+        to=recipient_emails,
+        reply_to=[employee.email],
     )
 
     message.content_subtype = 'html'
     
-    # Let Django raise an exception if the email server is down, 
-    # rather than failing silently and leaving the employee wondering.
     message.send(fail_silently=False)
 
     return JsonResponse({'message': 'Leave request notification email sent successfully.'})
