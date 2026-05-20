@@ -213,9 +213,6 @@ class Leave(models.Model):
         if self.start_date and self.end_date:
             if self.end_date < self.start_date:
                 raise ValidationError("End date cannot be before start date.")
-            # Only validate future dates on *new* records
-            if not self.pk and self.start_date < date.today():
-                raise ValidationError("Start date cannot be in the past.")
             if self.duration <= 0:
                 raise ValidationError("Leave duration must be at least one day.")
 
