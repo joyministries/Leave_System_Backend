@@ -1,20 +1,76 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Leave Request Notification</title>
-  </head>
-  <body style="margin:0; padding:0; background:#f1f5f9; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#0f172a;">
-    <div style="max-width:600px; margin:40px auto; background:#ffffff; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); padding:20px;">
-      <h2 style="color:#1e293b;">New Leave Request Submitted</h2>
-      <p style="font-size:16px; line-height:1.5; color:#334155;">
-        Hello, <br />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>New Leave Request Pending Action</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1e293b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 40px 10px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); overflow: hidden;">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #0f172a; padding: 28px; text-align: center;">
+              <img src="{{ logo_url }}" alt="Logo" width="48" height="48" style="vertical-align: middle; border-radius: 8px; margin-bottom: 12px; display: inline-block;" />
+              <h1 style="color: #ffffff; font-size: 20px; font-weight: 800; margin: 0;">Team Impact Christian University</h1>
+              <p style="color: #94a3b8; font-size: 13px; margin: 4px 0 0 0;">Leave Management System</p>
+            </td>
+          </tr>
 
-        A new leave request has been submitted by {{ user_name }} for the period of {{ leave_start_date }} to {{ leave_end_date }}. <br/>
-        The leave type is {{ leave_type }} and the reason provided is "{{ leave_reason }}".
-        Please review the leave request in your account <a href="{{ dashboard_url }}">dashboard</a> and take the necessary action. <br/>
-      </p>
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 36px 32px;">
+              <div style="display: inline-block; background-color: #dbeafe; color: #1e40af; font-size: 12px; font-weight: 800; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px;">
+                Action Required
+              </div>
+              <h2 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 16px;">New Leave Application Submitted</h2>
+              <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-bottom: 24px;">
+                Hello Administrator / Manager,<br /><br />
+                A new leave request has been submitted by <strong>{{ user_name }}</strong> and requires your review and approval.
+              </p>
 
-    </div>
-  </body>
+              <!-- Leave Details Box -->
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; border-radius: 12px; padding: 20px; margin-bottom: 28px; border: 1px solid #f1f5f9;">
+                <tr>
+                  <td style="padding-bottom: 12px; font-size: 13px; color: #64748b; font-weight: 600;">Applicant:</td>
+                  <td style="padding-bottom: 12px; font-size: 14px; color: #0f172a; font-weight: 700; text-align: right;">{{ user_name }}</td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 12px; font-size: 13px; color: #64748b; font-weight: 600;">Leave Type:</td>
+                  <td style="padding-bottom: 12px; font-size: 14px; color: #0f172a; font-weight: 700; text-align: right;">{{ leave_type }}</td>
+                </tr>
+                <tr>
+                  <td style="padding-bottom: 12px; font-size: 13px; color: #64748b; font-weight: 600;">Period:</td>
+                  <td style="padding-bottom: 12px; font-size: 14px; color: #0f172a; font-weight: 700; text-align: right;">{{ leave_start_date }} &mdash; {{ leave_end_date }}</td>
+                </tr>
+                {% if leave_reason %}
+                <tr>
+                  <td style="font-size: 13px; color: #64748b; font-weight: 600;">Reason:</td>
+                  <td style="font-size: 14px; color: #0f172a; text-align: right;">"{{ leave_reason }}"</td>
+                </tr>
+                {% endif %}
+              </table>
+
+              <!-- Action Button -->
+              <div style="text-align: center; margin-bottom: 20px;">
+                <a href="{{ dashboard_url }}" target="_blank" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 700; padding: 14px 32px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">Review Application</a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center;">
+              <p style="font-size: 12px; color: #94a3b8; margin: 0;">
+                &copy; Team Impact Christian University. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

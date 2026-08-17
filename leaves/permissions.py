@@ -1,92 +1,72 @@
 from rest_framework.permissions import BasePermission
-from .models import Employee
+from .models import Role
 
 
-class IsAdminRole(BasePermission):
-    """Only employees with the ADMIN or DIRECTOR role."""
-
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role in [
-            "ADMIN",
-            "DIRECTOR",
-        ]
-
-
-class IsAdminOrDirector(BasePermission):
-    """Employees with ADMIN or DIRECTOR role."""
-
-    def has_permission(self, request, view):
-        user = request.user
-
-        if not user.is_authenticated:
-            return False
-
-        role = getattr(user, "role", None)
-
-        return role in ["ADMIN", "DIRECTOR"]
-
-
-class IsManagerOrHREmployeeOnly(BasePermission):
-    """Manager/HR can only view and add employees, not edit/delete."""
-
-    def has_permission(self, request, view):
-        user = request.user
-
-        if not user.is_authenticated:
-            return False
-
-        role = getattr(user, "role", None)
-
-        # Allow view (GET) and create (POST) only
-        if request.method in ["GET", "POST"]:
-            return role in ["MANAGER", "HR", "ADMIN", "DIRECTOR"]
-
-        # Deny all other methods for Manager/HR
-        if role in ["MANAGER", "HR"]:
-            return False
-
-        # Allow for Admin/Director
-        return role in ["ADMIN", "DIRECTOR"]
-
-
-class IsAdminOrHROfSameInstitutionAndDepartment(BasePermission):
+class HasAction(BasePermission):
     """
-    Permission class to ensure that HR/Admin/Manager can only manage employees
-    and leave requests from their own institution and department.
+    Generic action-based permission. Build a bound version with `.action("leave.approve")`
+    and use it in permission_classes — no new class needed per action.
+
+        permission_classes = [IsAuthenticated, HasAction.action("leave.approve")]
     """
 
+    action_code = None
+
     def has_permission(self, request, view):
         user = request.user
-        if not user.is_authenticated:
+        if not user or not user.is_authenticated:
             return False
-        role = getattr(user, "role", None)
-        return role in ["ADMIN", "DIRECTOR", "HR", "MANAGER"]
+        if self.action_code is None:
+            return True
+        return user.has_permission(self.action_code)
+
+    @classmethod
+    def action(cls, code: str):
+        return type(f"HasAction_{code.replace('.', '_')}", (cls,), {"action_code": code})
+
+
+class HasAnyAction(BasePermission):
+    """Passes if the user holds ANY of the given codes. Use via .any_of(...)."""
+
+    action_codes = ()
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated or not user.role:
+            return False
+        return user.role.permissions.filter(code__in=self.action_codes).exists()
+
+    @classmethod
+    def any_of(cls, *codes):
+        return type("HasAnyAction_", (cls,), {"action_codes": codes})
+
+
+class InInstitutionScope(BasePermission):
+    """
+    Object-level check driven by the user's role.data_scope:
+      GLOBAL      -> always passes
+      INSTITUTION -> passes only if the object's institution matches the user's
+      OWN         -> passes only if the object belongs to (or is) the user
+    Works for both Employee objects and anything with an `.employee` or `.institution` attr.
+    """
 
     def has_object_permission(self, request, view, obj):
-        """
-        Check if the admin/HR/manager has access to the object based on institution and department.
-        Works for both Employee and Leave objects.
-        """
         user = request.user
+        role = getattr(user, "role", None)
+        if not role:
+            return False
 
-        if getattr(user, "role", None) in ["ADMIN", "DIRECTOR"]:
-            return True  # Admins and Directors have access to all objects
+        if role.data_scope == Role.DataScope.GLOBAL:
+            return True
 
-        # Get the institution and department of the requester
-        requester_institution = request.user.institution
-        requester_department = request.user.department
+        target_institution = getattr(obj, "institution", None)
+        if target_institution is None:
+            employee = getattr(obj, "employee", None)
+            target_institution = getattr(employee, "institution", None)
 
-        # Handle Leave objects (need to check employee's institution/department)
-        if hasattr(obj, "employee"):
-            target_institution = obj.employee.institution
-            target_department = obj.employee.department
-        # Handle Employee objects directly
-        else:
-            target_institution = obj.institution
-            target_department = obj.department
+        if role.data_scope == Role.DataScope.INSTITUTION:
+            return bool(user.institution_id) and target_institution == user.institution
 
-        # Check if requester's institution and department match target
-        return (
-            requester_institution == target_institution
-            and requester_department == target_department
-        )
+        # OWN
+        target_employee = obj if hasattr(obj, "role") else getattr(obj, "employee", None)
+        return target_employee == user

@@ -1,5 +1,5 @@
 import logging
-from .models import Leave, Employee, LeaveType, Institution, LeaveBalance
+from .models import Leave, Employee, LeaveType, Institution, LeaveBalance, Notification, Permission, Role, InstitutionSettings
 from .utils import calculate_working_days
 from rest_framework import serializers
 from django.contrib.auth.tokens import default_token_generator
@@ -9,6 +9,39 @@ from datetime import date
 from django.core.files.storage import default_storage
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# RBAC: Permission & Role Serializers
+# ---------------------------------------------------------------------------
+
+
+class PermissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Permission
+        fields = ["id", "code", "label", "category"]
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    permission_codes = serializers.SlugRelatedField(
+        source="permissions", slug_field="code", many=True, queryset=Permission.objects.all()
+    )
+
+    class Meta:
+        model = Role
+        fields = [
+            "id", "name", "institution", "data_scope",
+            "permission_codes", "is_system", "grants_django_admin",
+        ]
+        read_only_fields = ["is_system"]
+
+    def validate(self, data):
+        request = self.context["request"]
+        user = request.user
+        # Non-global-scope admins can only create roles for their own institution
+        if user.role and user.role.data_scope != Role.DataScope.GLOBAL:
+            data["institution"] = user.institution
+        return data
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +63,17 @@ class InstitutionSerializer(serializers.ModelSerializer):
 class EmployeeSerializer(serializers.ModelSerializer):
     leave_count = serializers.SerializerMethodField()
     institution_name = serializers.SerializerMethodField()
+    # 'role' returns the role NAME string (e.g. "ADMIN") for frontend
+    # backward-compatibility — user.role.toLowerCase() keeps working.
+    role = serializers.ReadOnlyField(source="role.name")
+    # 'role_id' exposes the FK integer for clients that need it.
+    role_id = serializers.PrimaryKeyRelatedField(
+        source="role",
+        queryset=Role.objects.all(),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = Employee
@@ -41,6 +85,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             "department",
             "position",
             "role",
+            "role_id",
             "institution",
             "institution_name",
             "leave_count",
@@ -290,8 +335,9 @@ class LeaveSerializer(serializers.ModelSerializer):
             "leave_duration",
             "paid_days",
             "extra_unpaid_days",
+            "created_at",
         ]
-        read_only_fields = ["status", "admin_remarks", "extra_unpaid_days"]
+        read_only_fields = ["status", "admin_remarks", "extra_unpaid_days", "created_at"]
 
     def get_leave_duration(self, obj):
         return calculate_working_days(obj.start_date, obj.end_date)
@@ -418,3 +464,22 @@ class LeaveSummarySerializer(serializers.Serializer):
     total_applications = serializers.IntegerField()
     is_active = serializers.BooleanField()
     status = serializers.CharField(allow_null=True)
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    leave_id = serializers.UUIDField(
+        source="leave.id", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "notification_type",
+            "leave_id",
+            "message",
+            "is_read",
+            "created_at",
+        ]
+        read_only_fields = fields
+

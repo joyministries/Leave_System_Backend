@@ -28,47 +28,7 @@ def trigger_welcome_email(sender, instance, created, **kwargs):
             )
 
 
-#@receiver(post_save, sender=Employee)
-#def trigger_leave_request_email(sender, instance, created, **kwargs):
-#    """Send an email when a new leave request is created."""
-#    if created and instance.leave_requests.exists():
-#        try:
-#            leave_request_submitted_email(instance)
-#            leave_request_notification_email(instance)
-#            logger.info(
-#                f"Leave request email sent from post_save signal to {instance.email}."
-#            )
-#        except Exception as e:
-#            logger.error(
-#                f"Failed to send leave request email from post_save signal to {instance.email}: {e}"
-#            )
 
-
-
-# @receiver(post_save, sender=Employee)
-# def trigger_leave_request_email_on_update(sender, instance, created, **kwargs):
-#     """Send an email when a leave request is updated."""
-#     if not created and instance.leave_requests.exists():
-#         try:
-#             leave_request_status_email(instance, instance.leave_requests.last(), 'update')
-#             logger.info(
-#                 f"Leave request update email sent from post_save signal to {instance.email}."
-#             )
-#         except Exception as e:
-#             logger.error(
-#                 f"Failed to send leave request update email from post_save signal to {instance.email}: {e}"
-#             )
-# 
-# @receiver(post_save, sender=Employee)
-# def trigger_leave_request_email_on_delete(sender, instance, created, **kwargs):
-#     """Send an email when a leave request is deleted."""
-#     if not created and instance.leave_requests.exists():
-#         try:
-#             leave_request_status_email(instance, instance.leave_requests.last(), 'cancellation')
-#             logger.info(
-#                 f"Leave request deletion email sent from post_save signal to {instance.email}."
-#             )
-#         except Exception as e:
-#             logger.error(
-#                 f"Failed to send leave request deletion email from post_save signal to {instance.email}: {e}"
-#             )
+# Note: Leave-request emails and notifications are handled explicitly in views.py
+# (perform_create, update_status, cancel). Signal handlers on Employee cannot
+# accurately inspect or process leave operations.

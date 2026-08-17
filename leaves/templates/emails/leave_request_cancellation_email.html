@@ -1,22 +1,54 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Leave Approval Notification</title>
-  </head>
-  <body style="margin:0; padding:0; background:#f1f5f9; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; color:#0f172a;">
-    <div style="max-width:600px; margin:40px auto; background:#ffffff; border-radius:8px; box-shadow:0 2px 4px rgba(0,0,0,0.1); padding:20px;">
-      <h2 style="color:#1e293b;">You have cancelled your leave request!</h2>
-      <p style="font-size:16px; line-height:1.5; color:#334155;">
-        Hi {{ employee_name }}, <br />
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Leave Request Cancelled</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #1e293b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 40px 10px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05); overflow: hidden;">
+          <!-- Header -->
+          <tr>
+            <td style="background-color: #0f172a; padding: 28px; text-align: center;">
+              <img src="{{ logo_url }}" alt="Logo" width="48" height="48" style="vertical-align: middle; border-radius: 8px; margin-bottom: 12px; display: inline-block;" />
+              <h1 style="color: #ffffff; font-size: 20px; font-weight: 800; margin: 0;">Team Impact Christian University</h1>
+              <p style="color: #94a3b8; font-size: 13px; margin: 4px 0 0 0;">Leave Management System</p>
+            </td>
+          </tr>
 
-        Your leave request for the period of {{ leave_start_date }} to {{ leave_end_date }} has been cancelled. <br/>
-      </p>
-      <p style="font-size:14px; line-height:1.5; color:#64748b; margin-top:30px;">
-        If you have any questions or need further assistance, please do not hesitate to contact the HR department.
-        Best regards, <br />
-        TCI University Leave Management Team.
-      </p>
-    </div>
-  </body>
+          <!-- Body Content -->
+          <tr>
+            <td style="padding: 36px 32px;">
+              <div style="display: inline-block; background-color: #f1f5f9; color: #475569; font-size: 12px; font-weight: 800; text-transform: uppercase; padding: 6px 14px; border-radius: 9999px; margin-bottom: 16px;">
+                Cancelled
+              </div>
+              <h2 style="font-size: 20px; font-weight: 700; color: #0f172a; margin-top: 0; margin-bottom: 16px;">Leave Request Cancelled</h2>
+              <p style="font-size: 15px; line-height: 1.6; color: #475569; margin-bottom: 24px;">
+                Hi {{ user_name }},<br /><br />
+                Your leave request for the period of <strong>{{ leave_start_date }}</strong> to <strong>{{ leave_end_date }}</strong> has been successfully cancelled.
+              </p>
+
+              <!-- Action Button -->
+              <div style="text-align: center; margin-bottom: 20px;">
+                <a href="{{ dashboard_url }}" target="_blank" style="display: inline-block; background-color: #0f172a; color: #ffffff; text-decoration: none; font-size: 15px; font-weight: 700; padding: 14px 32px; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">View Dashboard</a>
+              </div>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color: #f8fafc; padding: 20px 32px; border-top: 1px solid #e2e8f0; text-align: center;">
+              <p style="font-size: 12px; color: #94a3b8; margin: 0;">
+                &copy; Team Impact Christian University. All rights reserved.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

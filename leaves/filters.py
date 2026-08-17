@@ -1,19 +1,18 @@
-# filters.py
 from rest_framework import filters
 from django.core.exceptions import FieldError
+from .models import Role
 
 
 class RoleBasedAccessFilter(filters.BaseFilterBackend):
     """
-    A global filter that enforces Row-Level Security based on Employee Role.
-    It looks for `institution_lookup_field` and `employee_lookup_field`
-    on the ViewSet to know how to traverse the database relationships.
+    Row-level security driven by the requester's Role.data_scope, not by role name.
+    Looks for `institution_lookup_field` / `employee_lookup_field` on the ViewSet, same
+    as before.
     """
 
     def filter_queryset(self, request, queryset, view):
         user = request.user
 
-        # Check first if the is_deleted attribute exists and filter out deleted records
         try:
             if hasattr(queryset.model, "is_deleted"):
                 queryset = queryset.filter(is_deleted=False)
@@ -22,30 +21,23 @@ class RoleBasedAccessFilter(filters.BaseFilterBackend):
         except FieldError:
             pass
 
-        # Bypass filtering if the user isn't authenticated
-        if not user or not user.is_authenticated:
+        if not user or not user.is_authenticated or not user.role:
             return queryset.none()
 
-        user_role = str(user.role).upper() if user.role else ""
+        scope = user.role.data_scope
 
-        # 1. ADMIN & DIRECTOR: Global access, sees everything
-        if user_role in ["ADMIN", "DIRECTOR"]:
+        if scope == Role.DataScope.GLOBAL:
             return queryset
 
-        # Get the field names specific to the current ViewSet's model
         institution_field = getattr(view, "institution_lookup_field", None)
         employee_field = getattr(view, "employee_lookup_field", None)
 
-        # 2. MANAGER: Localized access to their institution
-        if user_role == "MANAGER":
-            if user.institution and institution_field:
-                # Creates a dynamic filter like: .filter(employee__institution=user.institution)
+        if scope == Role.DataScope.INSTITUTION:
+            if user.institution_id and institution_field:
                 return queryset.filter(**{institution_field: user.institution})
-            return queryset.none()  # Fails secure if they have no institution
+            return queryset.none()  # fail secure if no institution on the account
 
-        # 3. REGULAR EMPLOYEE: Can only see their own records
+        # OWN
         if employee_field:
-            # Creates a dynamic filter like: .filter(employee=user)
             return queryset.filter(**{employee_field: user})
-
         return queryset.none()

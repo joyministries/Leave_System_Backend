@@ -5,8 +5,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import date, timedelta
 from unittest.mock import patch
 import uuid
+from django.core.management import call_command
 
-from .models import Institution, Employee, LeaveType, Leave
+from .models import Institution, Employee, LeaveType, Leave, LeaveBalance, Notification, Permission, Role, InstitutionSettings
 
 
 class ByEmployeeLeaveEndpointTestCase(APITestCase):
@@ -14,20 +15,19 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
 
     def setUp(self):
         """Set up test data"""
+        call_command("seed_rbac")
+        self.staff_role = Role.objects.get(name="STAFF", institution=None)
+        self.hr_role = Role.objects.get(name="HR", institution=None)
+        self.admin_role = Role.objects.get(name="ADMIN", institution=None)
+
         # Create institutions
-        self.institution1 = Institution.objects.create(
-            name="Tech Corp", address="123 Tech St"
-        )
-        self.institution2 = Institution.objects.create(
-            name="Finance Inc", address="456 Finance Ave"
-        )
+        self.institution1 = Institution.objects.create(name="Tech Corp")
+        self.institution2 = Institution.objects.create(name="Finance Inc")
 
         # Create leave types
         self.leave_type = LeaveType.objects.create(
             name="Annual Leave",
-            description="Regular annual leave",
-            institution=self.institution1,
-            max_days_per_year=20,
+            max_days=20,
         )
 
         # Create employees in institution1, department A
@@ -39,7 +39,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="Engineering",
             position="Software Engineer",
             institution=self.institution1,
-            role=Employee.Role.STAFF,
+            role=self.staff_role,
         )
 
         self.employee2 = Employee.objects.create_user(
@@ -50,7 +50,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="Engineering",
             position="Product Manager",
             institution=self.institution1,
-            role=Employee.Role.STAFF,
+            role=self.staff_role,
         )
 
         # Create employee in different department
@@ -62,7 +62,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="Sales",
             position="Sales Manager",
             institution=self.institution1,
-            role=Employee.Role.STAFF,
+            role=self.staff_role,
         )
 
         # Create HR/Admin users
@@ -74,7 +74,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="Engineering",
             position="HR Manager",
             institution=self.institution1,
-            role=Employee.Role.HR,
+            role=self.hr_role,
         )
 
         self.admin_user = Employee.objects.create_user(
@@ -85,7 +85,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="Engineering",
             position="Administrator",
             institution=self.institution1,
-            role=Employee.Role.ADMIN,
+            role=self.admin_role,
         )
 
         # Create HR from different institution
@@ -97,7 +97,7 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             department="HR",
             position="HR Manager",
             institution=self.institution2,
-            role=Employee.Role.HR,
+            role=self.hr_role,
         )
 
         # Create leaves for employee1
@@ -146,6 +146,11 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         refresh = RefreshToken.for_user(user)
         return str(refresh.access_token)
 
+    def _get_results(self, response):
+        if isinstance(response.data, dict) and "results" in response.data:
+            return response.data["results"]
+        return response.data
+
     # =============================================
     # Test: Employee accessing their own leaves
     # =============================================
@@ -158,12 +163,11 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         response = self.client.get("/api/leaves/by_employee/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)  # employee1 has 2 leaves
-        self.assertEqual(response.data[0]["id"], str(self.leave1.id))
-        self.assertEqual(response.data[1]["id"], str(self.leave2.id))
+        results = self._get_results(response)
+        self.assertEqual(len(results), 2)  # employee1 has 2 leaves
 
     def test_employee_parameter_ignored(self):
-        """Employee cannot use employee_id parameter to see other employees' leaves"""
+        """Employee cannot see other employees' leaves by passing employee_id parameter"""
         token = self.get_token_for_user(self.employee1)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
@@ -173,9 +177,9 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # Should still return employee1's leaves (parameter ignored)
-        self.assertEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["id"], str(self.leave1.id))
+        results = self._get_results(response)
+        # Role-scoped queryset prevents seeing employee2's leaves
+        self.assertEqual(len(results), 0)
 
     def test_employee_unauthenticated(self):
         """Unauthenticated request returns 401"""
@@ -184,43 +188,37 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     # =============================================
-    # Test: HR/Admin viewing department leaves
+    # Test: HR/Admin viewing institution leaves
     # =============================================
 
-    def test_hr_see_all_department_leaves_without_parameter(self):
-        """HR can see all leaves from employees in their department"""
+    def test_hr_see_all_institution_leaves_without_parameter(self):
+        """HR can see all leaves from employees in their institution"""
         token = self.get_token_for_user(self.hr_user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
         response = self.client.get("/api/leaves/by_employee/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        # HR is in Engineering department, should see leaves from employee1, employee2, but not employee3
-        self.assertEqual(
-            len(response.data), 3
-        )  # leaves from employee1 (2) + employee2 (1)
-        leave_ids = [str(leave["id"]) for leave in response.data]
-        self.assertIn(str(self.leave1.id), leave_ids)
-        self.assertIn(str(self.leave2.id), leave_ids)
-        self.assertIn(str(self.leave3.id), leave_ids)
-        self.assertNotIn(str(self.leave4.id), leave_ids)
+        results = self._get_results(response)
+        self.assertEqual(len(results), 4)
 
-    def test_admin_see_all_department_leaves_without_parameter(self):
-        """Admin can see all leaves from employees in their department"""
+    def test_admin_see_all_leaves_without_parameter(self):
+        """Admin has global access and can see leaves across system"""
         token = self.get_token_for_user(self.admin_user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
         response = self.client.get("/api/leaves/by_employee/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 3)
+        results = self._get_results(response)
+        self.assertEqual(len(results), 4)
 
     # =============================================
     # Test: HR/Admin filtering by employee_id
     # =============================================
 
-    def test_hr_filter_by_employee_in_same_department(self):
-        """HR can filter leaves by employee_id if same department"""
+    def test_hr_filter_by_employee_in_same_institution(self):
+        """HR can filter leaves by employee_id in same institution"""
         token = self.get_token_for_user(self.hr_user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
@@ -229,63 +227,38 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 2)
-        self.assertEqual(response.data[0]["id"], str(self.leave1.id))
-        self.assertEqual(response.data[1]["id"], str(self.leave2.id))
-
-    def test_hr_filter_by_employee_different_department_forbidden(self):
-        """HR cannot filter by employee outside their department"""
-        token = self.get_token_for_user(self.hr_user)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-
-        # HR in Engineering trying to view employee3 (Sales department)
-        response = self.client.get(
-            f"/api/leaves/by_employee/?employee_id={self.employee3.id}"
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertIn("institution and department", response.data["error"])
+        results = self._get_results(response)
+        self.assertEqual(len(results), 2)
 
     def test_hr_filter_by_nonexistent_employee(self):
-        """HR filtering by non-existent employee returns 404"""
+        """HR filtering by non-existent employee returns empty list"""
         token = self.get_token_for_user(self.hr_user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
         fake_id = uuid.uuid4()
         response = self.client.get(f"/api/leaves/by_employee/?employee_id={fake_id}")
 
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
-        self.assertIn("not found", response.data["error"])
-
-    def test_admin_filter_by_employee_in_same_department(self):
-        """Admin can filter leaves by employee_id if same department"""
-        token = self.get_token_for_user(self.admin_user)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-
-        response = self.client.get(
-            f"/api/leaves/by_employee/?employee_id={self.employee2.id}"
-        )
-
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 1)
-        self.assertEqual(response.data[0]["id"], str(self.leave3.id))
+        results = self._get_results(response)
+        self.assertEqual(len(results), 0)
 
     # =============================================
     # Test: Cross-institution access
     # =============================================
 
     def test_hr_different_institution_cannot_see_leaves(self):
-        """HR from different institution cannot see leaves"""
+        """HR from different institution cannot see leaves from another institution"""
         token = self.get_token_for_user(self.hr_other_institution)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
         response = self.client.get("/api/leaves/by_employee/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data), 0)  # No leaves from their institution
+        results = self._get_results(response)
+        self.assertEqual(len(results), 0)
 
     def test_hr_different_institution_cannot_access_employee(self):
-        """HR from different institution cannot access specific employee"""
+        """HR from institution B cannot see leaves of employee in institution A"""
         token = self.get_token_for_user(self.hr_other_institution)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
 
@@ -293,7 +266,9 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
             f"/api/leaves/by_employee/?employee_id={self.employee1.id}"
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = self._get_results(response)
+        self.assertEqual(len(results), 0)
 
     # =============================================
     # Test: Response format and content
@@ -307,9 +282,9 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         response = self.client.get("/api/leaves/by_employee/")
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        leave_data = response.data[0]
+        results = self._get_results(response)
+        leave_data = results[0]
 
-        # Verify required fields exist
         required_fields = [
             "id",
             "employee",
@@ -326,30 +301,17 @@ class ByEmployeeLeaveEndpointTestCase(APITestCase):
         for field in required_fields:
             self.assertIn(field, leave_data, f"Missing field: {field}")
 
-    def test_response_is_list(self):
-        """Response is always a list, even for single employee"""
-        token = self.get_token_for_user(self.hr_user)
-        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
-
-        response = self.client.get(
-            f"/api/leaves/by_employee/?employee_id={self.employee1.id}"
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIsInstance(response.data, list)
-        self.assertGreater(len(response.data), 0)
-
 
 class EmployeeCreationEmailFlowTests(APITestCase):
-    """Tests for employee creation and welcome email transactional behavior."""
+    """Tests for employee creation and account creation email transactional behavior."""
 
     def setUp(self):
+        call_command("seed_rbac")
+        self.staff_role = Role.objects.get(name="STAFF", institution=None)
+        self.admin_role = Role.objects.get(name="ADMIN", institution=None)
         self.client = APIClient()
 
-        # Create an institution and an admin user who can create employees
-        self.institution = Institution.objects.create(
-            name="Test Institution", address="123 Test St"
-        )
+        self.institution = Institution.objects.create(name="Test Institution")
 
         self.admin_user = Employee.objects.create_user(
             email="admin@test.com",
@@ -359,15 +321,15 @@ class EmployeeCreationEmailFlowTests(APITestCase):
             department="HR",
             position="Administrator",
             institution=self.institution,
-            role=Employee.Role.ADMIN,
+            role=self.admin_role,
         )
 
     def get_token_for_user(self, user):
         refresh = RefreshToken.for_user(user)
         return str(refresh.access_token)
 
-    def test_employee_created_even_if_welcome_email_fails(self):
-        """If welcome email fails, the employee should still be persisted."""
+    def test_employee_created_even_if_email_fails(self):
+        """If account creation email fails, the employee should still be persisted."""
 
         token = self.get_token_for_user(self.admin_user)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
@@ -378,23 +340,20 @@ class EmployeeCreationEmailFlowTests(APITestCase):
             "last_name": "Employee",
             "department": "Engineering",
             "position": "Developer",
-            "role": Employee.Role.STAFF,
+            "role": str(self.staff_role.id),
             "institution": str(self.institution.id),
             "phone_number": "1234567890",
         }
 
         with patch(
-            "leaves.views.send_welcome_email", side_effect=Exception("SMTP error")
+            "leaves.views.send_account_creation_email", side_effect=Exception("SMTP error")
         ):
             response = self.client.post("/api/employees/", payload, format="json")
 
-        # Creation should still succeed with 201
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-
-        # Ensure the employee was created even though email failed
         self.assertTrue(Employee.objects.filter(email="new.employee@test.com").exists())
 
-    def test_employee_creation_succeeds_when_welcome_email_succeeds(self):
+    def test_employee_creation_succeeds_when_email_succeeds(self):
         """On successful email send, employee should be created normally."""
 
         token = self.get_token_for_user(self.admin_user)
@@ -406,12 +365,12 @@ class EmployeeCreationEmailFlowTests(APITestCase):
             "last_name": "Employee",
             "department": "Engineering",
             "position": "Developer",
-            "role": Employee.Role.STAFF,
+            "role": str(self.staff_role.id),
             "institution": str(self.institution.id),
             "phone_number": "1234567890",
         }
 
-        with patch("leaves.views.send_welcome_email") as mock_send:
+        with patch("leaves.views.send_account_creation_email") as mock_send:
             response = self.client.post("/api/employees/", payload, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -419,3 +378,239 @@ class EmployeeCreationEmailFlowTests(APITestCase):
             Employee.objects.filter(email="success.employee@test.com").exists()
         )
         mock_send.assert_called_once()
+
+
+class PreMigrationGateAndNotificationTests(APITestCase):
+    """Tests for Notification engine and pre-migration bug fixes."""
+
+    def setUp(self):
+        call_command("seed_rbac")
+        self.staff_role = Role.objects.get(name="STAFF", institution=None)
+        self.hr_role = Role.objects.get(name="HR", institution=None)
+
+        self.institution_a = Institution.objects.create(name="Institution A")
+        self.institution_b = Institution.objects.create(name="Institution B")
+
+        self.leave_type = LeaveType.objects.create(name="Annual Leave", max_days=20)
+
+        self.emp_a = Employee.objects.create_user(
+            email="emp.a@insta.com",
+            password="testpass123",
+            first_name="Emp",
+            last_name="A",
+            department="Engineering",
+            position="Developer",
+            institution=self.institution_a,
+            role=self.staff_role,
+        )
+
+        self.emp_b = Employee.objects.create_user(
+            email="emp.b@instb.com",
+            password="testpass123",
+            first_name="Emp",
+            last_name="B",
+            department="Finance",
+            position="Accountant",
+            institution=self.institution_b,
+            role=self.staff_role,
+        )
+
+        self.hr_a = Employee.objects.create_user(
+            email="hr.a@insta.com",
+            password="testpass123",
+            first_name="HR",
+            last_name="A",
+            department="HR",
+            position="HR Officer",
+            institution=self.institution_a,
+            role=self.hr_role,
+        )
+
+        self.client = APIClient()
+
+    def get_token_for_user(self, user):
+        refresh = RefreshToken.for_user(user)
+        return str(refresh.access_token)
+
+    def test_hr_sees_only_own_institution_leaves(self):
+        """HR user in Institution A sees leaves from Institution A employees, not Institution B."""
+        Leave.objects.create(
+            employee=self.emp_a,
+            leave_type=self.leave_type,
+            start_date=date.today() + timedelta(days=1),
+            end_date=date.today() + timedelta(days=3),
+            reason="Leave A",
+        )
+        Leave.objects.create(
+            employee=self.emp_b,
+            leave_type=self.leave_type,
+            start_date=date.today() + timedelta(days=1),
+            end_date=date.today() + timedelta(days=3),
+            reason="Leave B",
+        )
+
+        token = self.get_token_for_user(self.hr_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        response = self.client.get("/api/leaves/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        results = response.data.get("results", response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(str(results[0]["employee"]), str(self.emp_a.id))
+
+    def test_extra_unpaid_days_calculated_from_days_remaining(self):
+        """Employee with days_remaining < duration gets extra_unpaid_days based on remaining balance."""
+        current_year = date.today().year
+        # max_days is 20. Employee has already used 15 days, so days_remaining is 5.
+        LeaveBalance.objects.create(
+            employee=self.emp_a,
+            leave_type=self.leave_type,
+            year=current_year,
+            days_used=15,
+        )
+
+        token = self.get_token_for_user(self.emp_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        # Request 10 days of leave (which is <= max_days 20, but > remaining 5)
+        payload = {
+            "leave_type": self.leave_type.id,
+            "start_date": str(date.today() + timedelta(days=1)),
+            "end_date": str(date.today() + timedelta(days=10)),
+            "reason": "Extended Leave",
+        }
+
+        response = self.client.post("/api/leaves/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        created_leave = Leave.objects.get(id=response.data["id"])
+        # duration is 10 days, remaining was 5, so extra_unpaid_days should be 10 - 5 = 5
+        self.assertEqual(created_leave.extra_unpaid_days, 5)
+
+    def test_cancel_does_not_trigger_submission_notification_email(self):
+        """cancel() must NOT trigger leave_request_notification_email."""
+        leave = Leave.objects.create(
+            employee=self.emp_a,
+            leave_type=self.leave_type,
+            start_date=date.today() + timedelta(days=1),
+            end_date=date.today() + timedelta(days=3),
+            reason="To be cancelled",
+            status=Leave.Status.PENDING,
+        )
+
+        token = self.get_token_for_user(self.emp_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        with patch("leaves.views.leave_request_notification_email") as mock_admin_notify:
+            response = self.client.post(f"/api/leaves/{leave.id}/cancel/")
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            mock_admin_notify.assert_not_called()
+
+    def test_notifications_scoped_to_authenticated_user(self):
+        """GET /api/notifications/ returns only the authenticated user's own notifications."""
+        n1 = Notification.objects.create(
+            recipient=self.emp_a,
+            notification_type=Notification.NotificationType.LEAVE_APPROVED,
+            message="Notice for A",
+        )
+        n2 = Notification.objects.create(
+            recipient=self.emp_b,
+            notification_type=Notification.NotificationType.LEAVE_REJECTED,
+            message="Notice for B",
+        )
+
+        token_a = self.get_token_for_user(self.emp_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_a}")
+
+        response = self.client.get("/api/notifications/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        results = response.data.get("results", response.data)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["id"], str(n1.id))
+
+    def test_notification_unread_count_and_mark_all_read(self):
+        """GET /api/notifications/unread_count/ and POST /api/notifications/mark_all_read/ work as expected."""
+        Notification.objects.create(
+            recipient=self.emp_a,
+            notification_type=Notification.NotificationType.LEAVE_APPROVED,
+            message="Notice 1",
+            is_read=False,
+        )
+        Notification.objects.create(
+            recipient=self.emp_a,
+            notification_type=Notification.NotificationType.LEAVE_SUBMITTED,
+            message="Notice 2",
+            is_read=False,
+        )
+
+        token_a = self.get_token_for_user(self.emp_a)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token_a}")
+
+        # Check unread count
+        response = self.client.get("/api/notifications/unread_count/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["unread_count"], 2)
+
+        # Mark all as read
+        response = self.client.post("/api/notifications/mark_all_read/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Check unread count again
+        response = self.client.get("/api/notifications/unread_count/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["unread_count"], 0)
+
+
+class RbacAndRoleManagementTests(APITestCase):
+    """Tests for new RBAC functionality, Role API, system roles protection, and institution scoping."""
+
+    def setUp(self):
+        call_command("seed_rbac")
+        self.client = APIClient()
+        self.institution_a = Institution.objects.create(name="School A")
+        self.institution_b = Institution.objects.create(name="School B")
+
+        self.admin_role = Role.objects.get(name="ADMIN", institution=None)
+        self.staff_role = Role.objects.get(name="STAFF", institution=None)
+
+        self.admin_user = Employee.objects.create_user(
+            email="global.admin@test.com",
+            password="adminpass123",
+            first_name="Global",
+            last_name="Admin",
+            department="IT",
+            position="Admin",
+            institution=self.institution_a,
+            role=self.admin_role,
+        )
+
+    def get_token_for_user(self, user):
+        refresh = RefreshToken.for_user(user)
+        return str(refresh.access_token)
+
+    def test_cannot_delete_system_role(self):
+        token = self.get_token_for_user(self.admin_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        response = self.client.delete(f"/api/roles/{self.admin_role.id}/")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("System roles cannot be deleted", response.data["error"])
+
+    def test_create_and_assign_custom_institution_role(self):
+        token = self.get_token_for_user(self.admin_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+
+        payload = {
+            "name": "Custom Department Head",
+            "institution": self.institution_a.id,
+            "data_scope": "INSTITUTION",
+            "permission_codes": ["employee.view", "leave.create"],
+        }
+        response = self.client.post("/api/roles/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        new_role_id = response.data["id"]
+
+        custom_role = Role.objects.get(id=new_role_id)
+        self.assertEqual(custom_role.institution, self.institution_a)
+        self.assertTrue(custom_role.has_permission("leave.create"))
+        self.assertFalse(custom_role.has_permission("employee.delete"))

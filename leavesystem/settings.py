@@ -139,26 +139,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "leavesystem.wsgi.application"
 
-
 # Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-# PostgreSQL configuration (for production)
-# Uncomment and set environment variables to use PostgreSQL
-
-
 DATABASES = {
     "default": dj_database_url.config(
         default=os.getenv("DATABASE_URL"),
-        conn_max_age=600,
-        ssl_require=True,
+        conn_max_age=int(os.getenv("CONN_MAX_AGE", "0")),
+        ssl_require=os.getenv("DB_SSL_REQUIRE", "False") == "True",
     )
 }
 
-
 # Password validation
-# https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
@@ -174,10 +164,6 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-
-# Internationalization
-# https://docs.djangoproject.com/en/5.2/topics/i18n/
-
 LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = "UTC"
@@ -186,14 +172,9 @@ USE_I18N = True
 
 USE_TZ = True
 
-
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.2/howto/static-files/
-
 STATIC_URL = "static/"
 STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
-
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
@@ -218,7 +199,6 @@ SIMPLE_JWT = {
 AUTH_USER_MODEL = "leaves.Employee"
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
-
 
 LOGGING = {
     "version": 1,

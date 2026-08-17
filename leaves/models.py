@@ -43,24 +43,111 @@ class EmailUserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 
+class Permission(models.Model):
+    """
+    A single grantable action. The *set* of codes is fixed by the codebase (views check
+    for specific codes) — what's dynamic is which roles include which codes.
+    Seeded once via the seed_rbac management command (Section 5); not user-creatable.
+    """
+    code = models.CharField(max_length=100, unique=True, help_text="e.g. 'leave.approve'")
+    label = models.CharField(max_length=255)
+    category = models.CharField(max_length=50, blank=True, help_text="e.g. 'Leave', 'Employee'")
+
+    class Meta:
+        ordering = ["category", "code"]
+
+    def __str__(self):
+        return self.code
+
+
+class Role(models.Model):
+    """
+    A named bundle of permissions. institution=None is a system template role,
+    shared as a starting point across every institution. institution=<X> is a role
+    that only exists for, and can only be assigned within, institution X.
+    """
+
+    class DataScope(models.TextChoices):
+        OWN = "OWN", "Own records only"
+        INSTITUTION = "INSTITUTION", "Everything in their own institution"
+        GLOBAL = "GLOBAL", "Everything, across all institutions"
+
+    name = models.CharField(max_length=100)
+    institution = models.ForeignKey(
+        Institution,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="roles",
+        help_text="Null = system-wide template. Set = custom role scoped to one institution.",
+    )
+    data_scope = models.CharField(
+        max_length=20, choices=DataScope.choices, default=DataScope.OWN
+    )
+    permissions = models.ManyToManyField(Permission, related_name="roles", blank=True)
+    is_system = models.BooleanField(
+        default=False,
+        help_text="Seeded default role (STAFF/MANAGER/HR/DIRECTOR/ADMIN). Cannot be deleted.",
+    )
+    grants_django_admin = models.BooleanField(
+        default=False,
+        help_text="Mirrors the old is_staff logic — controls Django admin login access.",
+    )
+
+    class Meta:
+        unique_together = ("name", "institution")
+        ordering = ["institution__name", "name"]
+
+    def __str__(self):
+        scope = self.institution.name if self.institution else "System"
+        return f"{self.name} [{scope}]"
+
+    def has_permission(self, code: str) -> bool:
+        return self.permissions.filter(code=code).exists()
+
+    def clean(self):
+        if self.is_system and self.institution_id:
+            raise ValidationError("System roles cannot be scoped to a single institution.")
+
+
+class InstitutionSettings(models.Model):
+    """
+    Institution-level toggles that used to be hardcoded in views/serializers.
+    One row per institution; created on demand via get_or_create.
+    """
+
+    institution = models.OneToOneField(
+        Institution, on_delete=models.CASCADE, related_name="settings"
+    )
+    default_role = models.ForeignKey(
+        Role,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text="Role auto-assigned to employees created without an explicit role.",
+    )
+    allow_self_cancel = models.BooleanField(
+        default=True, help_text="Whether STAFF-scope employees may cancel their own pending leave."
+    )
+    require_second_approval_over_days = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="If set, requests longer than this many days need a second approver "
+        "(enforced in update_status once a two-step workflow exists — see brainstorm doc).",
+    )
+    max_consecutive_leave_days = models.PositiveIntegerField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Settings for {self.institution.name}"
+
+
 class Employee(AbstractUser):
     """
     Custom user model — uses email as the login field.
 
-    Roles control dashboard routing and data visibility:
-      STAFF     → sees only their own records
-      MANAGER   → can view and add employees only
-      HR        → can view and add employees only (institution-scoped)
-      DIRECTOR  → same as Admin (global access)
-      ADMIN     → full system access, Django admin
+    Roles control dashboard routing and data visibility.
     """
-
-    class Role(models.TextChoices):
-        STAFF = "STAFF", "Staff"
-        MANAGER = "MANAGER", "Manager"
-        HR = "HR", "HR"
-        DIRECTOR = "DIRECTOR", "Director"
-        ADMIN = "ADMIN", "Admin"
 
     username = None
 
@@ -71,7 +158,14 @@ class Employee(AbstractUser):
     phone_number = models.CharField(max_length=20, blank=True, null=True)
     department = models.CharField(max_length=100, blank=True, null=True)
     position = models.CharField(max_length=100, blank=True, null=True)
-    role = models.CharField(max_length=20, choices=Role.choices, default=Role.STAFF)
+    role = models.ForeignKey(
+        "Role",
+        on_delete=models.PROTECT,
+        related_name="employees",
+        null=True,
+        blank=True,
+        help_text="Determines what this employee can do. See Role.permissions.",
+    )
     institution = models.ForeignKey(
         Institution,
         on_delete=models.CASCADE,
@@ -102,9 +196,16 @@ class Employee(AbstractUser):
             f"{self.first_name} {self.last_name} ({self.department} - {self.position})"
         )
 
+    def has_permission(self, code: str) -> bool:
+        """Central check used by every permission class below."""
+        return bool(self.role and self.role.has_permission(code))
+
+    @property
+    def role_name(self):
+        return self.role.name if self.role else None
+
     def save(self, *args, **kwargs):
-        # Only HR, DIRECTOR, and ADMIN get Django admin access
-        self.is_staff = self.role in [self.Role.HR, self.Role.DIRECTOR, self.Role.ADMIN]
+        self.is_staff = bool(self.role and self.role.grants_django_admin)
         super().save(*args, **kwargs)
 
 
@@ -171,6 +272,15 @@ class Leave(models.Model):
         on_delete=models.CASCADE,
         related_name="leaves",
     )
+    institution = models.ForeignKey(
+        Institution,
+        on_delete=models.CASCADE,
+        related_name="leaves",
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Denormalized from employee.institution at creation time.",
+    )
     leave_type = models.ForeignKey(
         LeaveType,
         on_delete=models.PROTECT,
@@ -208,6 +318,11 @@ class Leave(models.Model):
             models.Index(fields=["employee", "leave_type"]),
             models.Index(fields=["status"]),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.employee_id and not self.institution_id:
+            self.institution = self.employee.institution
+        super().save(*args, **kwargs)
 
     def clean(self):
         if self.start_date and self.end_date:
@@ -296,3 +411,39 @@ class LeaveBalance(models.Model):
             f"{self.employee} — {self.leave_type.name} "
             f"{self.year}: {self.days_used}/{self.leave_type.max_days} used"
         )
+
+
+class Notification(models.Model):
+    class NotificationType(models.TextChoices):
+        LEAVE_SUBMITTED = "LEAVE_SUBMITTED", "Leave Submitted"
+        LEAVE_APPROVED = "LEAVE_APPROVED", "Leave Approved"
+        LEAVE_REJECTED = "LEAVE_REJECTED", "Leave Rejected"
+        LEAVE_CANCELLED = "LEAVE_CANCELLED", "Leave Cancelled"
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    notification_type = models.CharField(
+        max_length=30, choices=NotificationType.choices
+    )
+    leave = models.ForeignKey(
+        Leave,
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        null=True,
+        blank=True,
+    )
+    message = models.CharField(max_length=255)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["recipient", "is_read"])]
+
+    def __str__(self):
+        return f"Notification for {self.recipient.email}: {self.notification_type}"
+

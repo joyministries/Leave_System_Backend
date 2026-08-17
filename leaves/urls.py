@@ -12,7 +12,10 @@ from .views import (
     EmployeeViewSet,
     LeaveTypeViewSet,
     LeaveViewSet,
-    PostLoginPasswordView
+    NotificationViewSet,
+    PostLoginPasswordView,
+    RoleViewSet,
+    PermissionViewSet,
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -22,6 +25,9 @@ router.register(r'institutions', InstitutionViewSet, basename='institution')
 router.register(r'employees', EmployeeViewSet, basename='employee')
 router.register(r'leave-types', LeaveTypeViewSet, basename='leave-type')
 router.register(r'leaves', LeaveViewSet, basename='leave')
+router.register(r'notifications', NotificationViewSet, basename='notification')
+router.register(r'roles', RoleViewSet, basename='role')
+router.register(r'permissions', PermissionViewSet, basename='permission')
 
 urlpatterns = [
     # Include all ViewSet routes

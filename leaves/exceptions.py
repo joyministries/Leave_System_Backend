@@ -105,7 +105,8 @@ def custom_exception_handler(exc, context):
                 status=response.status_code,
             )
 
-    # If response is None, return a generic error response
+    # If response is None, return a generic error response after logging the traceback
+    logger.exception("Unhandled server exception in API: %s", exc)
     return Response(
         {
             "status": 0,

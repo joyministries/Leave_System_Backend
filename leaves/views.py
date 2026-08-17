@@ -16,7 +16,7 @@ import datetime
 import calendar
 
 from .filters import RoleBasedAccessFilter
-from .models import Institution, Employee, LeaveType, Leave, LeaveBalance
+from .models import Institution, Employee, LeaveType, Leave, LeaveBalance, Notification, Permission, Role, InstitutionSettings
 from .serializers import (
     InstitutionSerializer,
     EmployeeSerializer,
@@ -30,6 +30,9 @@ from .serializers import (
     LeaveStatusUpdateSerializer,
     SetPasswordSerializer,
     PostLoginPasswordSerializer,
+    NotificationSerializer,
+    PermissionSerializer,
+    RoleSerializer,
 )
 from .utils import (
     calculate_working_days,
@@ -38,8 +41,9 @@ from .utils import (
     leave_request_notification_email,
     leave_request_status_email,
     leave_request_submitted_email,
+    get_leave_notification_recipients,
 )
-from .permissions import IsAdminRole, IsAdminOrDirector, IsManagerOrHREmployeeOnly
+from .permissions import HasAction, HasAnyAction, InInstitutionScope
 import logging
 import traceback
 
@@ -208,7 +212,7 @@ class MeView(APIView):
 class InstitutionViewSet(viewsets.ModelViewSet):
     queryset = Institution.objects.all()
     serializer_class = InstitutionSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrDirector]
+    permission_classes = [IsAuthenticated, HasAction.action("institution.manage")]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
 
@@ -232,7 +236,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["get"],
-        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+        permission_classes=[IsAuthenticated, HasAction.action("institution.manage")],
     )
     def employees(self, request, pk=None):
         institution = self.get_object()
@@ -244,7 +248,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["get"],
-        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+        permission_classes=[IsAuthenticated, HasAction.action("institution.manage")],
     )
     def employee_count(self, request, pk=None):
         count = self.get_object().employees.filter(is_active=True).count()
@@ -258,7 +262,7 @@ class InstitutionViewSet(viewsets.ModelViewSet):
 
 class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.select_related("institution").filter(is_deleted=False)
-    permission_classes = [IsAuthenticated, IsManagerOrHREmployeeOnly]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, RoleBasedAccessFilter]
     filterset_fields = {
         "department": ["exact", "icontains"],
@@ -273,12 +277,20 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         "last_name",
         "department",
         "position",
-        "role",
     ]
 
     # Consumed by RoleBasedAccessFilter
     institution_lookup_field = "institution"
     employee_lookup_field = "id"
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated(), HasAction.action("employee.create")()]
+        if self.action in ["update", "partial_update"]:
+            return [IsAuthenticated(), HasAction.action("employee.edit")()]
+        if self.action == "destroy":
+            return [IsAuthenticated(), HasAction.action("employee.delete")()]
+        return [IsAuthenticated(), HasAction.action("employee.view")()]
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -346,7 +358,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         detail=True,
         methods=["post"],
         url_path="resend_invite",
-        permission_classes=[IsAuthenticated, IsManagerOrHREmployeeOnly],
+        permission_classes=[IsAuthenticated, HasAction.action("employee.create")],
     )
     def resend_invite(self, request, pk=None):
         """Resend the account creation email — useful if the link expired."""
@@ -388,16 +400,14 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 class LeaveTypeViewSet(viewsets.ModelViewSet):
     queryset = LeaveType.objects.all()
     serializer_class = LeaveTypeSerializer
-    permission_classes = [IsAuthenticated, IsAdminOrDirector]
+    permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    search_fields = ["name"]
-
     filterset_fields = ["is_active"]
     search_fields = ["name"]
 
     def get_permissions(self):
-        if self.action in ["create", "update", "partial_update", "destroy"]:
-            return [IsAuthenticated(), IsAdminOrDirector()]
+        if self.action in ["create", "update", "partial_update", "destroy", "toggle_active"]:
+            return [IsAuthenticated(), HasAction.action("leave_type.manage")()]
         return [IsAuthenticated()]
 
     def destroy(self, request, *args, **kwargs):
@@ -459,17 +469,39 @@ class LeaveViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Save the leave. If the requested duration exceeds the leave type's
-        max_days, the overflow is recorded as extra_unpaid_days.
+        Save the leave. If the requested duration exceeds the employee's remaining
+        paid days balance, the overflow is recorded as extra_unpaid_days.
         The request is ALWAYS accepted — excess days are just marked unpaid.
         """
         leave = serializer.save(employee=self.request.user)
-        if leave.duration > leave.leave_type.max_days:
-            leave.extra_unpaid_days = leave.duration - leave.leave_type.max_days
+
+        year = leave.start_date.year
+        balance, _ = LeaveBalance.objects.get_or_create(
+            employee=leave.employee,
+            leave_type=leave.leave_type,
+            year=year,
+            defaults={"days_used": 0},
+        )
+        remaining = balance.days_remaining
+
+        if leave.duration > remaining:
+            leave.extra_unpaid_days = leave.duration - max(remaining, 0)
             leave.save(update_fields=["extra_unpaid_days"])
+            # Notify the employee that their balance is exhausted
+            Notification.objects.create(
+                recipient=leave.employee,
+                notification_type=Notification.NotificationType.LEAVE_SUBMITTED,
+                leave=leave,
+                message=(
+                    f"⚠️ Your {leave.leave_type.name} balance is exhausted. "
+                    f"{leave.extra_unpaid_days} day(s) of your request will be unpaid."
+                ),
+            )
 
         logger.info(
-            f"Leave request created: Employee {leave.employee.email}, Type {leave.leave_type.name}, Duration {leave.duration} days (including {leave.extra_unpaid_days} unpaid)"
+            f"Leave request created: Employee {leave.employee.email}, Type {leave.leave_type.name}, "
+            f"Duration {leave.duration} days, {remaining} days remained in balance, "
+            f"{leave.extra_unpaid_days} unpaid."
         )
 
         # Notify the submitting employee
@@ -483,6 +515,13 @@ class LeaveViewSet(viewsets.ModelViewSet):
             leave_request_notification_email(leave.employee, leave_request=leave)
         except Exception as exc:
             logger.error(f"Failed to send admin notification for leave {leave.id}: {exc}")
+
+        # In-app notification to recipients
+        _notify_recipients(
+            leave,
+            Notification.NotificationType.LEAVE_SUBMITTED,
+            f"New leave request submitted by {leave.employee.first_name or ''} {leave.employee.last_name or ''}".strip() or leave.employee.email,
+        )
 
     def destroy(self, request, *args, **kwargs):
         leave = self.get_object()
@@ -503,10 +542,10 @@ class LeaveViewSet(viewsets.ModelViewSet):
     @action(
         detail=True,
         methods=["post"],
-        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+        permission_classes=[IsAuthenticated, HasAnyAction.any_of("leave.approve", "leave.reject")],
     )
     def update_status(self, request, pk=None):
-        """Approve or reject a leave request. ADMIN / DIRECTOR only."""
+        """Approve or reject a leave request."""
         try:
             leave = self.get_object()
 
@@ -535,8 +574,20 @@ class LeaveViewSet(viewsets.ModelViewSet):
             email_type = None
             if new_status == Leave.Status.APPROVED:
                 email_type = "approval"
+                Notification.objects.create(
+                    recipient=leave.employee,
+                    notification_type=Notification.NotificationType.LEAVE_APPROVED,
+                    leave=leave,
+                    message="Your leave request has been approved.",
+                )
             elif new_status == Leave.Status.REJECTED:
                 email_type = "rejection"
+                Notification.objects.create(
+                    recipient=leave.employee,
+                    notification_type=Notification.NotificationType.LEAVE_REJECTED,
+                    leave=leave,
+                    message="Your leave request has been rejected.",
+                )
             elif new_status == Leave.Status.CANCELLED:
                 email_type = "cancellation"
 
@@ -588,10 +639,18 @@ class LeaveViewSet(viewsets.ModelViewSet):
             )
         leave.status = Leave.Status.CANCELLED
         leave.save(update_fields=["status"])
-        leave_request_notification_email(leave.employee, leave_request=leave)
-        leave_request_status_email(
-            leave.employee, leave_request=leave, email_type="cancellation"
+        _notify_recipients(
+            leave,
+            Notification.NotificationType.LEAVE_CANCELLED,
+            f"Leave request cancelled by {leave.employee.first_name or ''} {leave.employee.last_name or ''}".strip() or leave.employee.email,
         )
+        try:
+            leave_request_status_email(
+                leave.employee, leave_request=leave, email_type="cancellation"
+            )
+        except Exception as exc:
+            logger.error(f"Cancellation email failed: {exc}")
+
         return Response({"message": "Leave request cancelled."})
 
     @action(detail=False, methods=["get"], permission_classes=[IsAuthenticated])
@@ -692,7 +751,7 @@ class LeaveViewSet(viewsets.ModelViewSet):
         detail=False,
         methods=["get"],
         url_path="monthly-report",
-        permission_classes=[IsAuthenticated, IsAdminOrDirector],
+        permission_classes=[IsAuthenticated, HasAction.action("report.view")],
     )
     def monthly_report(self, request):
         """
@@ -799,7 +858,6 @@ class LeaveViewSet(viewsets.ModelViewSet):
             }
         )
 
-
     @action(detail=True, methods=["post"], permission_classes=[IsAuthenticated])
     def upload_document(self, request, pk=None):
         """
@@ -883,46 +941,38 @@ class LeaveViewSet(viewsets.ModelViewSet):
         """
         Download supporting document for a leave request.
         Works with any storage backend (local, S3, etc).
-        Only the employee who submitted the leave or admins can download.
+        Only the employee who submitted the leave or users with leave.download_document_any can download.
         """
+        leave = self.get_object()
+
+        # Permission check: only employee or permission holders can download
+        if not (request.user == leave.employee or request.user.has_permission("leave.download_document_any")):
+            return Response(
+                {"error": "Permission denied"},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check if document exists
+        if not leave.supporting_document:
+            return Response(
+                {"error": "No document attached to this leave request"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
         try:
-            leave = self.get_object()
-
-            # Permission check: only employee or admin/director can download
-            if not (request.user == leave.employee or request.user.role in ['ADMIN', 'DIRECTOR']):
-                return Response(
-                    {"error": "Permission denied"},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-
-            # Check if document exists
-            if not leave.supporting_document:
-                return Response(
-                    {"error": "No document attached to this leave request"},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-
-            # Get file name and extension
             file_name = leave.supporting_document.name.split('/')[-1]
-
-            # Read file content from storage (works with S3, local, etc)
-            file_content = leave.supporting_document.read()
-
-            # Determine MIME type based on extension
             import mimetypes
             mime_type, _ = mimetypes.guess_type(file_name)
             mime_type = mime_type or 'application/octet-stream'
 
-            # Return file as streaming response
-            from django.http import HttpResponse
-            response = HttpResponse(file_content, content_type=mime_type)
+            file_handle = leave.supporting_document.open('rb')
+            response = FileResponse(file_handle, content_type=mime_type)
             response['Content-Disposition'] = f'attachment; filename="{file_name}"'
             return response
-
         except Exception as e:
-            logger.error(f"Error downloading document: {e}\n{traceback.format_exc()}")
+            logger.error(f"Error downloading document: {e}", exc_info=True)
             return Response(
-                {"error": "Failed to download document", "detail": str(e)},
+                {"error": "Failed to download document"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
@@ -1031,6 +1081,44 @@ def _build_leave_summary(employee):
     return rows
 
 
+def _notify_recipients(leave, notification_type, message):
+    recipients = get_leave_notification_recipients(leave.employee)
+    Notification.objects.bulk_create([
+        Notification(
+            recipient=r,
+            notification_type=notification_type,
+            leave=leave,
+            message=message,
+        )
+        for r in recipients
+    ])
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return Notification.objects.filter(recipient=self.request.user)
+
+    @action(detail=False, methods=["get"])
+    def unread_count(self, request):
+        count = self.get_queryset().filter(is_read=False).count()
+        return Response({"unread_count": count})
+
+    @action(detail=False, methods=["post"])
+    def mark_all_read(self, request):
+        updated = self.get_queryset().filter(is_read=False).update(is_read=True)
+        return Response({"message": f"{updated} notification(s) marked as read."})
+
+    @action(detail=True, methods=["post"])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save(update_fields=["is_read"])
+        return Response(NotificationSerializer(notification).data)
+
+
 def _update_leave_balance(leave: Leave):
     """
     When a leave is approved, increment the employee's leave balance
@@ -1053,3 +1141,42 @@ def _update_leave_balance(leave: Leave):
         leave_type=leave.leave_type,
         year=year,
     ).update(days_used=F("days_used") + paid)
+
+
+# =============================================================================
+# ROLE & PERMISSION VIEWS
+# =============================================================================
+
+
+class RoleViewSet(viewsets.ModelViewSet):
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated, HasAction.action("role.manage")]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Role.objects.select_related("institution").prefetch_related("permissions")
+        if user.role and user.role.data_scope == Role.DataScope.GLOBAL:
+            return qs
+        # Institution-scoped admins see system templates + their own custom roles
+        return qs.filter(Q(institution__isnull=True) | Q(institution=user.institution))
+
+    def destroy(self, request, *args, **kwargs):
+        role = self.get_object()
+        if role.is_system:
+            return Response(
+                {"error": "System roles cannot be deleted."}, status=status.HTTP_400_BAD_REQUEST
+            )
+        if role.employees.exists():
+            return Response(
+                {"error": "Cannot delete a role that is still assigned to employees."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+
+class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only catalogue of possible actions, for building the role-editor UI."""
+    queryset = Permission.objects.all()
+    serializer_class = PermissionSerializer
+    permission_classes = [IsAuthenticated]
+
