@@ -11,6 +11,12 @@ class Institution(models.Model):
     """Represents an institution (e.g. a university campus or company branch)."""
 
     name = models.CharField(max_length=255, unique=True)
+    allowed_leave_types = models.ManyToManyField(
+        "LeaveType",
+        blank=True,
+        related_name="allowed_institutions",
+        help_text="Leave types allowed/enabled for this institution branch.",
+    )
 
     def __str__(self):
         return self.name
@@ -213,12 +219,21 @@ class LeaveType(models.Model):
     """
     Configurable leave types (Annual, Sick, Study, etc.).
     max_days is the *paid* entitlement. Any days beyond this are unpaid.
+    institution=None represents a system-wide default template.
+    institution=<X> represents a custom leave type available only to that branch.
     """
 
     name = models.CharField(
         max_length=100,
-        unique=True,
         help_text="e.g. Annual Leave, Sick Leave, Family Responsibility Leave, Study Leave",
+    )
+    institution = models.ForeignKey(
+        Institution,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="leave_types",
+        help_text="Null = system-wide template. Set = custom leave type scoped to one institution.",
     )
     max_days = models.PositiveIntegerField(
         help_text="Maximum number of *paid* days allowed per leave application"
@@ -240,11 +255,14 @@ class LeaveType(models.Model):
     )
 
     class Meta:
+        unique_together = ("name", "institution")
+        ordering = ["institution__name", "name"]
         verbose_name = "Leave Type"
         verbose_name_plural = "Leave Types"
 
     def __str__(self):
-        return f"{self.name} — {self.max_days} paid days"
+        scope = self.institution.name if self.institution else "System"
+        return f"{self.name} [{scope}] — {self.max_days} paid days"
 
 
 class Leave(models.Model):

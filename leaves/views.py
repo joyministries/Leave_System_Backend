@@ -210,11 +210,22 @@ class MeView(APIView):
 
 
 class InstitutionViewSet(viewsets.ModelViewSet):
-    queryset = Institution.objects.all()
     serializer_class = InstitutionSerializer
-    permission_classes = [IsAuthenticated, HasAction.action("institution.manage")]
+    permission_classes = [IsAuthenticated]
     filter_backends = [filters.SearchFilter]
     search_fields = ["name"]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Institution.objects.all()
+        if not user or not user.is_authenticated:
+            return qs.none()
+        return qs
+
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy", "employees", "employee_count"]:
+            return [IsAuthenticated(), HasAction.action("institution.manage")()]
+        return [IsAuthenticated()]
 
     def create(self, request, *args, **kwargs):
         if Institution.objects.filter(name=request.data.get("name")).exists():
@@ -398,17 +409,41 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
 
 class LeaveTypeViewSet(viewsets.ModelViewSet):
-    queryset = LeaveType.objects.all()
     serializer_class = LeaveTypeSerializer
     permission_classes = [IsAuthenticated]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter]
-    filterset_fields = ["is_active"]
+    filterset_fields = ["is_active", "institution"]
     search_fields = ["name"]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = LeaveType.objects.select_related("institution")
+        if not user or not user.is_authenticated:
+            return qs.none()
+
+        # Global admins and directors see all leave types across all institutions + system templates
+        if user.role and user.role.data_scope == Role.DataScope.GLOBAL:
+            return qs
+
+        # Branch employees, managers, and HR:
+        if user.institution_id and user.institution:
+            if user.institution.allowed_leave_types.exists():
+                return user.institution.allowed_leave_types.filter(is_active=True).select_related("institution")
+            return qs.filter(Q(institution__isnull=True) | Q(institution=user.institution))
+
+        return qs.filter(institution__isnull=True)
 
     def get_permissions(self):
         if self.action in ["create", "update", "partial_update", "destroy", "toggle_active"]:
             return [IsAuthenticated(), HasAction.action("leave_type.manage")()]
         return [IsAuthenticated()]
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if user.role and user.role.data_scope == Role.DataScope.INSTITUTION:
+            serializer.save(institution=user.institution)
+        else:
+            serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         leave_type = self.get_object()
@@ -991,8 +1026,21 @@ def _build_leave_summary(employee):
     current_year = datetime.date.today().year
     today = datetime.date.today()
 
-    # Query 1: Base Query — Get ALL active leave types
-    active_leave_types = LeaveType.objects.filter(is_active=True).order_by("name")
+    # Query 1: Base Query — Get active leave types for this employee's branch
+    if employee.institution_id and employee.institution:
+        if employee.institution.allowed_leave_types.exists():
+            active_leave_types = employee.institution.allowed_leave_types.filter(
+                is_active=True
+            ).order_by("name")
+        else:
+            active_leave_types = LeaveType.objects.filter(
+                Q(institution__isnull=True) | Q(institution_id=employee.institution_id),
+                is_active=True,
+            ).order_by("name")
+    else:
+        active_leave_types = LeaveType.objects.filter(
+            institution__isnull=True, is_active=True
+        ).order_by("name")
 
     # Query 2: Get Balances for the current year
     balances = {

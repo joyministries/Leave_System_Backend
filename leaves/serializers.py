@@ -45,14 +45,131 @@ class RoleSerializer(serializers.ModelSerializer):
 
 
 # ---------------------------------------------------------------------------
+# Leave Type
+# ---------------------------------------------------------------------------
+
+
+class LeaveTypeSerializer(serializers.ModelSerializer):
+    institution_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = LeaveType
+        fields = [
+            "id",
+            "name",
+            "institution",
+            "institution_name",
+            "max_days",
+            "allowed_months",
+            "is_active",
+        ]
+
+    def get_institution_name(self, obj):
+        return obj.institution.name if obj.institution else None
+
+    def validate_allowed_months(self, value):
+        """Ensure the list only contains valid month numbers 1–12 with no duplicates."""
+        if value is None:
+            return value
+        if not isinstance(value, list):
+            raise serializers.ValidationError("allowed_months must be a list of integers.")
+        if not all(isinstance(m, int) and 1 <= m <= 12 for m in value):
+            raise serializers.ValidationError(
+                "Each month must be an integer between 1 and 12."
+            )
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError("Duplicate month values are not allowed.")
+        return sorted(value)
+
+
+class AllowedLeaveTypesField(serializers.Field):
+    """
+    Accepts:
+      - Array of integers: [1, 2, 3]
+      - Array of strings/PKs: ["1", "2"]
+      - Array of name strings: ["Annual Leave", "Sick Leave"]
+      - Array of objects: [{"id": 1}, {"name": "Annual Leave"}]
+    Serializes to:
+      - Array of serialized LeaveType dicts [{id: 1, name: "Annual Leave", ...}, ...]
+    """
+
+    def to_internal_value(self, data):
+        if data is None:
+            return []
+        if not isinstance(data, list):
+            raise serializers.ValidationError("allowed_leave_types must be a list.")
+
+        resolved_types = []
+        for item in data:
+            if isinstance(item, LeaveType):
+                resolved_types.append(item)
+            elif isinstance(item, int) or (isinstance(item, str) and item.isdigit()):
+                lt = LeaveType.objects.filter(pk=int(item)).first()
+                if lt:
+                    resolved_types.append(lt)
+            elif isinstance(item, str):
+                lt = LeaveType.objects.filter(name__iexact=item.strip()).first()
+                if lt:
+                    resolved_types.append(lt)
+            elif isinstance(item, dict):
+                lt_id = item.get("id") or item.get("pk")
+                lt_name = item.get("name")
+                lt = None
+                if lt_id:
+                    lt = LeaveType.objects.filter(pk=lt_id).first()
+                elif lt_name:
+                    lt = LeaveType.objects.filter(name__iexact=lt_name.strip()).first()
+                if lt:
+                    resolved_types.append(lt)
+        return resolved_types
+
+    def to_representation(self, value):
+        if hasattr(value, "all"):
+            lts = value.all()
+        elif isinstance(value, (list, tuple)):
+            lts = value
+        else:
+            lts = []
+        return LeaveTypeSerializer(lts, many=True).data
+
+
+# ---------------------------------------------------------------------------
 # Institution
 # ---------------------------------------------------------------------------
 
 
 class InstitutionSerializer(serializers.ModelSerializer):
+    allowed_leave_types = AllowedLeaveTypesField(required=False)
+    allowed_leave_type_names = serializers.SerializerMethodField()
+    leave_types = AllowedLeaveTypesField(source="allowed_leave_types", required=False)
+
     class Meta:
         model = Institution
-        fields = ["id", "name"]
+        fields = [
+            "id",
+            "name",
+            "allowed_leave_types",
+            "allowed_leave_type_names",
+            "leave_types",
+        ]
+
+    def get_allowed_leave_type_names(self, obj):
+        return list(obj.allowed_leave_types.values_list("name", flat=True))
+
+    def create(self, validated_data):
+        allowed_lts = validated_data.pop("allowed_leave_types", None)
+        institution = Institution.objects.create(**validated_data)
+        if allowed_lts is not None:
+            institution.allowed_leave_types.set(allowed_lts)
+        return institution
+
+    def update(self, instance, validated_data):
+        allowed_lts = validated_data.pop("allowed_leave_types", None)
+        instance.name = validated_data.get("name", instance.name)
+        instance.save()
+        if allowed_lts is not None:
+            instance.allowed_leave_types.set(allowed_lts)
+        return instance
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +177,65 @@ class InstitutionSerializer(serializers.ModelSerializer):
 # ---------------------------------------------------------------------------
 
 
+class RoleField(serializers.PrimaryKeyRelatedField):
+    """
+    Flexible related field that accepts either:
+      - A primary key integer (e.g. 1, 5)
+      - A primary key string (e.g. "1", "5")
+      - A role name string (e.g. "ADMIN", "MANAGER", "HR", "STAFF", "DIRECTOR")
+    And serializes to:
+      - The role name string (e.g. "ADMIN") for frontend backward compatibility.
+    """
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("queryset", Role.objects.all())
+        super().__init__(**kwargs)
+
+    def use_pk_only_optimization(self):
+        return False
+
+    def to_internal_value(self, data):
+        if isinstance(data, Role):
+            return data
+
+        if data is None or data == "":
+            if self.allow_null:
+                return None
+            self.fail("null")
+
+        # If data is integer or string representing integer PK
+        if isinstance(data, int) or (isinstance(data, str) and data.isdigit()):
+            return super().to_internal_value(data)
+
+        # If data is a role name string (e.g. "STAFF", "ADMIN", "MANAGER")
+        if isinstance(data, str):
+            role_name = data.strip()
+            # Lookup by name (case-insensitive)
+            role = Role.objects.filter(name__iexact=role_name).first()
+            if role:
+                return role
+            raise serializers.ValidationError(
+                f"Role with name '{data}' does not exist."
+            )
+
+        return super().to_internal_value(data)
+
+    def to_representation(self, value):
+        if hasattr(value, "name") and value.name:
+            return value.name
+        # If it's a PK or PKOnlyObject, look up the role name
+        pk = getattr(value, "pk", value)
+        if pk:
+            role = Role.objects.filter(pk=pk).first()
+            if role:
+                return role.name
+        return None
+
+
 class EmployeeSerializer(serializers.ModelSerializer):
     leave_count = serializers.SerializerMethodField()
     institution_name = serializers.SerializerMethodField()
-    # 'role' returns the role NAME string (e.g. "ADMIN") for frontend
-    # backward-compatibility — user.role.toLowerCase() keeps working.
-    role = serializers.ReadOnlyField(source="role.name")
+    role = RoleField(required=False, allow_null=True)
     # 'role_id' exposes the FK integer for clients that need it.
     role_id = serializers.PrimaryKeyRelatedField(
         source="role",
@@ -118,6 +288,8 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
       4. Employee clicks the link → SetPassword view → account activated.
     """
 
+    role = RoleField(required=False, allow_null=True)
+
     class Meta:
         model = Employee
         fields = [
@@ -155,6 +327,8 @@ class EmployeeCreateSerializer(serializers.ModelSerializer):
 
 
 class EmployeeUpdateSerializer(serializers.ModelSerializer):
+    role = RoleField(required=False, allow_null=True)
+
     class Meta:
         model = Employee
         fields = [
@@ -241,29 +415,7 @@ class PostLoginPasswordSerializer(serializers.Serializer):
         return employee
 
 
-# ---------------------------------------------------------------------------
-# Leave Type
-# ---------------------------------------------------------------------------
 
-
-class LeaveTypeSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = LeaveType
-        fields = ["id", "name", "max_days", "allowed_months", "is_active"]
-
-    def validate_allowed_months(self, value):
-        """Ensure the list only contains valid month numbers 1–12 with no duplicates."""
-        if value is None:
-            return value
-        if not isinstance(value, list):
-            raise serializers.ValidationError("allowed_months must be a list of integers.")
-        if not all(isinstance(m, int) and 1 <= m <= 12 for m in value):
-            raise serializers.ValidationError(
-                "Each month must be an integer between 1 and 12."
-            )
-        if len(value) != len(set(value)):
-            raise serializers.ValidationError("Duplicate month values are not allowed.")
-        return sorted(value)
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +541,29 @@ class LeaveSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"leave_type": f"'{leave_type.name}' is currently inactive."}
             )
+
+        # Ensure the leave type is available/allowed for the applicant's institution
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if user and user.is_authenticated and leave_type:
+            if user.institution_id and user.institution:
+                if user.institution.allowed_leave_types.exists():
+                    if not user.institution.allowed_leave_types.filter(id=leave_type.id).exists():
+                        raise serializers.ValidationError(
+                            {
+                                "leave_type": (
+                                    f"'{leave_type.name}' is not allowed for employees of {user.institution.name}."
+                                )
+                            }
+                        )
+                elif leave_type.institution_id and leave_type.institution_id != user.institution_id:
+                    raise serializers.ValidationError(
+                        {
+                            "leave_type": (
+                                f"'{leave_type.name}' is only available for employees of {leave_type.institution.name}."
+                            )
+                        }
+                    )
 
         if leave_type and leave_type.allowed_months and start_date and end_date:
             allowed = leave_type.allowed_months

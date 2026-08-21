@@ -1,6 +1,6 @@
 # 🏢 Leave Management System – Backend API
 
-A production-ready Django REST Framework backend for managing multi-institution employee leave requests, balances, approval workflows, dynamic RBAC, and transactional notifications.
+A production-ready Django REST Framework backend for managing multi-institution employee leave requests, branch-scoped leave types, balances, approval workflows, dynamic RBAC, and transactional notifications.
 
 ---
 
@@ -8,7 +8,8 @@ A production-ready Django REST Framework backend for managing multi-institution 
 
 - [Features](#-features)
 - [Tech Stack](#-tech-stack)
-- [RBAC & Permission Architecture](#-rbac--permission-architecture)
+- [RBAC & Data Scoping Architecture](#-rbac--data-scoping-architecture)
+- [Branch-Specific & Allowed Leave Types](#-branch-specific--allowed-leave-types)
 - [Prerequisites](#-prerequisites)
 - [Installation & Setup](#-installation--setup)
 - [Environment Configuration](#-environment-configuration)
@@ -25,8 +26,9 @@ A production-ready Django REST Framework backend for managing multi-institution 
 ## ✨ Features
 
 ### 🏛️ Multi-Institution Architecture
-- Support for multiple branches/institutions (e.g. universities, schools, ministries).
+- Support for multiple branches/institutions (e.g. *Team Impact Christian University*, *Lambton Christian School*, *New Haven Academy*).
 - Customizable institution settings: default role, self-cancel permission, maximum consecutive leave days, and dual-approval thresholds.
+- **Branch-Specific Allowed Leave Types**: Each branch can selectively enable which leave types are available for its employees (e.g. enabling specific leave types while excluding unpaid leave).
 
 ### 🛡️ Dynamic Role-Based Access Control (RBAC)
 - Fine-grained permission model (`Permission` and `Role`).
@@ -34,16 +36,17 @@ A production-ready Django REST Framework backend for managing multi-institution 
   - **`GLOBAL`**: Cross-institution visibility (Admins, Directors).
   - **`INSTITUTION`**: Scoped strictly to the employee's own branch (Managers, HR).
   - **`OWN`**: Scoped strictly to the employee's own records (Staff).
+- Flexible role assignment: APIs accept string role names (`"STAFF"`, `"MANAGER"`, `"ADMIN"`) as well as primary key IDs, and consistently serialize role names for seamless frontend consumption.
 - Support for creating custom institution-specific roles without altering code.
 
 ### 🌴 Leave Management & Automated Balances
 - **Entitlement Calculation**: Automatically tracks annual leave balances per employee per year.
 - **Paid vs. Unpaid Allocation**: When an application exceeds remaining paid balance, excess days are flagged as `extra_unpaid_days` while approving the request.
-- **Inclusive Duration Calculations**: Accurately computes calendar day ranges.
-- **Document Attachments**: Upload and download supporting medical certificates or leave documents (AWS S3 or local storage).
+- **Inclusive Duration Calculations**: Accurately computes working days and calendar ranges.
+- **Document Attachments**: Upload and download supporting medical certificates or leave documents (AWS S3 signed URLs or local storage).
 
 ### ✍️ Approval & Cancellation Workflows
-- Multi-role review: Branch Managers, HR, Directors, and Admins can approve or reject pending leave requests with optional remarks.
+- Multi-role review: Branch Managers, HR, Directors, and Admins can approve or reject pending leave requests within their data scope with optional admin remarks.
 - Self-cancellation by employees for pending requests, and administrative cancellation.
 
 ### 🔔 Notifications & Transactional Emails
@@ -73,7 +76,7 @@ A production-ready Django REST Framework backend for managing multi-institution 
 
 ---
 
-## 🔐 RBAC & Permission Architecture
+## 🔐 RBAC & Data Scoping Architecture
 
 ### Default System Roles
 
@@ -90,6 +93,21 @@ A production-ready Django REST Framework backend for managing multi-institution 
 - `employee.view`, `employee.create`, `employee.edit`, `employee.delete`
 - `leave.create`, `leave.cancel_own`, `leave.cancel_any`, `leave.approve`, `leave.reject`, `leave.download_document_any`
 - `leave_type.manage`, `institution.manage`, `role.manage`, `report.view`
+
+---
+
+## 🏢 Branch-Specific & Allowed Leave Types
+
+1. **System Templates vs. Custom Branch Types**:
+   - `LeaveType.institution = None`: System-wide default templates available across all branches (e.g. *Annual Leave*, *Sick Leave*, *Family Responsibility Leave*).
+   - `LeaveType.institution = <Institution>`: Custom leave types created specifically for a single branch.
+2. **Allowed Leave Types per Branch**:
+   - `Institution.allowed_leave_types`: A Many-to-Many relationship on `Institution` designating exactly which leave types employees in that branch can select.
+3. **Automatic View Filtering**:
+   - **`GET /api/leave-types/`**: Automatically returns only the allowed leave types for the authenticated employee's branch.
+   - **`GET /api/leaves/my-summary/`**: Dashboard summary cards and balances strictly render for the employee's branch-allowed types.
+   - **`POST /api/leaves/`**: Submissions for disallowed leave types are rejected on validation.
+   - **`GET /api/institutions/`**: Accessible to all authenticated users, exposing `allowed_leave_types` and `allowed_leave_type_names` to populate the frontend Active Branches table and configuration modals.
 
 ---
 
@@ -210,14 +228,14 @@ gunicorn leavesystem.wsgi:application --bind 0.0.0.0:8000 --workers 4
 backendproject/
 ├── leaves/                       # Main core application
 │   ├── management/commands/      # Custom management scripts (seed_rbac, setup_admin)
-│   ├── migrations/               # Database migrations (including RBAC & data migrations)
+│   ├── migrations/               # Database migrations (RBAC, Multi-branch, Leave types)
 │   ├── templates/emails/         # HTML transactional email templates
 │   ├── admin.py                  # Django admin registrations
 │   ├── exceptions.py             # Custom DRF exception handlers
 │   ├── filters.py                # RoleBasedAccessFilter (data scoping)
 │   ├── models.py                 # Core models (Employee, Role, Leave, Institution, etc.)
 │   ├── permissions.py            # HasAction, HasAnyAction, InInstitutionScope
-│   ├── serializers.py            # DRF ModelSerializers
+│   ├── serializers.py            # DRF ModelSerializers & custom field handlers
 │   ├── signals.py                # Post-save signals (leave balances, user activation)
 │   ├── urls.py                   # App URL route configuration
 │   ├── utils.py                  # Leave calculation, token generation, email senders
@@ -248,12 +266,16 @@ Full endpoint documentation is available in [API_ENDPOINTS.md](file:///c:/Users/
 | `POST` | `/api/auth/set-password/` | Set password via email invite/reset token | Public |
 | `GET` | `/api/auth/me/` | Get current user's profile and permissions | Authenticated |
 | `GET` / `POST` | `/api/leaves/` | List scoped leaves / Submit new leave application | Authenticated |
-| `GET` | `/api/leaves/summary/` | Monthly summary metrics & employee breakdown | Authenticated |
+| `GET` | `/api/leaves/my-summary/` | Employee dashboard leave summary cards & balances | Authenticated |
+| `GET` | `/api/leaves/monthly-report/` | Monthly summary metrics & employee breakdown | `report.view` |
 | `POST` | `/api/leaves/{id}/update_status/` | Approve or reject a leave request | `leave.approve` / `leave.reject` |
 | `POST` | `/api/leaves/{id}/cancel/` | Employee cancels own pending leave | Authenticated |
 | `GET` | `/api/leaves/{id}/download_document/` | Download attached supporting document | Owner / `leave.download_document_any` |
 | `GET` / `POST` | `/api/employees/` | List / Onboard new employee (sends invite) | `employee.view` / `employee.create` |
-| `GET` / `POST` | `/api/institutions/` | List / Manage branches | `institution.manage` |
+| `GET` | `/api/institutions/` | List active branches and their allowed leave types | Authenticated |
+| `POST` / `PATCH` / `DELETE` | `/api/institutions/{id}/` | Create / Update allowed leave types / Delete branch | `institution.manage` |
+| `GET` | `/api/leave-types/` | List branch-allowed active leave types | Authenticated |
+| `POST` / `PATCH` / `DELETE` | `/api/leave-types/{id}/` | Create / Edit / Delete leave types | `leave_type.manage` |
 | `GET` / `POST` | `/api/roles/` | List system templates & custom institution roles | `role.manage` |
 | `GET` | `/api/notifications/` | View user notifications | Authenticated |
 | `GET` | `/api/notifications/unread_count/` | Get unread notification badge count | Authenticated |
