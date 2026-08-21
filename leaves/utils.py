@@ -21,14 +21,14 @@ def get_leave_notification_recipients(employee):
     """
     if not employee.institution_id:
         return Employee.objects.filter(
-            role__in=[Employee.Role.ADMIN, Employee.Role.DIRECTOR],
+            role__name__in=["ADMIN", "DIRECTOR"],
             is_active=True,
             is_deleted=False,
         )
     return Employee.objects.filter(
-        Q(role__in=[Employee.Role.ADMIN, Employee.Role.DIRECTOR])
+        Q(role__name__in=["ADMIN", "DIRECTOR"])
         | Q(
-            role__in=[Employee.Role.HR, Employee.Role.MANAGER],
+            role__name__in=["HR", "MANAGER"],
             institution_id=employee.institution_id,
         ),
         is_active=True,

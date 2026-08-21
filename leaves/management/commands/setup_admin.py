@@ -47,12 +47,14 @@ class Command(BaseCommand):
         admin_password = os.getenv("ADMIN_PASSWORD")
 
         if not Employee.objects.filter(email=admin_email).exists():
+            from leaves.models import Role
+            admin_role = Role.objects.filter(name="ADMIN", institution=None).first()
             admin = Employee.objects.create_superuser(
                 email=admin_email,
                 password=admin_password,
                 first_name="System",
                 last_name="Administrator",
-                role=Employee.Role.ADMIN,
+                role=admin_role,
                 institution=institution,
                 department="System",
                 position="Director"
