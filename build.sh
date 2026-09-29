@@ -16,7 +16,7 @@ uv pip install --system -r requirements.txt
 echo "Collecting static files..."
 python manage.py collectstatic --no-input
 
-# 4. Run database migrations to Supabase
+# 4. Run database migrations (MariaDB/MySQL via DATABASE_URL)
 echo "Running migrations..."
 python manage.py migrate
 

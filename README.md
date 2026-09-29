@@ -163,8 +163,8 @@ DEBUG=True
 SECRET_KEY=your-super-secret-django-key
 ALLOWED_HOSTS=localhost,127.0.0.1,.onrender.com
 
-# Database Connection (PostgreSQL)
-DATABASE_URL=postgresql://postgres:password@localhost:5432/leavesystem_db
+# Database Connection (MariaDB/MySQL)
+DATABASE_URL=mysql://joyministries_leavesadmin:your-password@joyministries.co.za:3306/joyministries_leaves
 
 # Frontend URLs (for password reset and activation links)
 FRONTEND_URL=http://localhost:5173
