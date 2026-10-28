@@ -18,6 +18,11 @@ from dotenv import load_dotenv
 from decouple import config
 import sentry_sdk
 
+# Use PyMySQL as the MySQL/MariaDB driver (Django's MySQL backend imports MySQLdb).
+# Safe alongside psycopg: only registers the MySQLdb alias, Postgres still uses psycopg.
+import pymysql
+pymysql.install_as_MySQLdb()
+
 load_dotenv()  # Load environment variables from .env file
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
