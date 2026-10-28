@@ -1,3 +1,5 @@
+from posixpath import basename
+from boto3.resources import base
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -16,7 +18,7 @@ from .views import (
     PostLoginPasswordView,
     RoleViewSet,
     PermissionViewSet,
-    HealthView,
+    HealthViewSet,
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -29,6 +31,7 @@ router.register(r'leaves', LeaveViewSet, basename='leave')
 router.register(r'notifications', NotificationViewSet, basename='notification')
 router.register(r'roles', RoleViewSet, basename='role')
 router.register(r'permissions', PermissionViewSet, basename='permission')
+router.register(r'health', HealthViewSet, basename='health')
 
 urlpatterns = [
     # Include all ViewSet routes
@@ -43,7 +46,6 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
-    path('health/', HealthView.as_view(), name='health'),
 
     #======= PASSWORD FLOWS ==============
 

@@ -1231,7 +1231,7 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
-class HealthView(viewsets.ReadOnlyModelViewSet):
+class HealthViewSet(viewsets.ReadOnlyModelViewSet):
      def health(request):
         """Public uptime check. Confirms the app is running and can reach the database."""
         try:
