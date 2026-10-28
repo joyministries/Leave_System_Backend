@@ -16,6 +16,7 @@ from .views import (
     PostLoginPasswordView,
     RoleViewSet,
     PermissionViewSet,
+    HealthView,
 )
 from rest_framework_simplejwt.views import TokenRefreshView
 
@@ -42,6 +43,7 @@ urlpatterns = [
     path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
+    path('health/', HealthView.as_view(), name='health'),
 
     #======= PASSWORD FLOWS ==============
 

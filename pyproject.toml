@@ -19,7 +19,8 @@ dependencies = [
     "dotenv>=0.9.9",
     "drf-spectacular>=0.29.0",
     "gunicorn>=25.2.0",
-    "psycopg[binary]>=3.3.3",
+    "mysqlclient>=2.2.0",
     "python-decouple>=3.8",
+    "sentry-sdk[django]>=2.73.0",
     "whitenoise>=6.12.0",
 ]

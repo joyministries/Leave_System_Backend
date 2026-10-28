@@ -16,6 +16,7 @@ import os
 import dj_database_url
 from dotenv import load_dotenv
 from decouple import config
+import sentry_sdk
 
 load_dotenv()  # Load environment variables from .env file
 
@@ -30,6 +31,8 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = True
 
 SECRET_KEY = config("SECRET_KEY")
+
+SENTRY_DSN = os.getenv("SENTRY_DSN")
 
 # Configure allowed hosts - includes common development and deployment domains
 ALLOWED_HOSTS = [
@@ -57,6 +60,7 @@ INSTALLED_APPS = [
     "storages",
     "whitenoise.runserver_nostatic",
     "django_filters",
+    "rest_framework_simplejwt.token_blacklist",
     # Local apps
     "leaves",
     "leavesystem",
@@ -230,3 +234,11 @@ ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", DEFAULT_FROM_EMAIL)
 
 # Email address to receive all leave request notifications
 LEAVE_NOTIFICATION_EMAIL = os.getenv("LEAVE_NOTIFICATION_EMAIL", DEFAULT_FROM_EMAIL)
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        environment=os.getenv("APP_ENV", "production"),
+        traces_sample_rate=0.0,
+        send_default_pii=False,
+    )

@@ -166,3 +166,5 @@ cython_debug/
 
 # Database
 db/supabase_dump.sql
+
+migrate_documents.py

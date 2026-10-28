@@ -15,6 +15,9 @@ from django.http import FileResponse
 import datetime
 import calendar
 
+from django.db import connection
+from django.http import JsonResponse
+
 from .filters import RoleBasedAccessFilter
 from .models import Institution, Employee, LeaveType, Leave, LeaveBalance, Notification, Permission, Role, InstitutionSettings
 from .serializers import (
@@ -93,7 +96,6 @@ class LoginView(APIView):
                 "must_reset_password": employee.must_reset_password,
             }
         )
-
 
 class SetPassword(APIView):
     """
@@ -1228,3 +1230,14 @@ class PermissionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = PermissionSerializer
     permission_classes = [IsAuthenticated]
 
+
+class HealthView(viewsets.ReadOnlyModelViewSet):
+     def health(request):
+        """Public uptime check. Confirms the app is running and can reach the database."""
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            return JsonResponse({"status": "ok"})
+        except Exception:
+            logger.exception("Health check failed")
+            return JsonResponse({"status": "error"}, status=503)

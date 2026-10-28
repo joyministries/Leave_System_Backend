@@ -214,6 +214,9 @@ class Employee(AbstractUser):
         self.is_staff = bool(self.role and self.role.grants_django_admin)
         super().save(*args, **kwargs)
 
+    class Meta:
+        ordering = ["last_name", "first_name", "email"]
+
 
 class LeaveType(models.Model):
     """
